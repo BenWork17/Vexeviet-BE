@@ -24,7 +24,7 @@ model User {
   status                 UserStatus     @default(PENDING_VERIFICATION)
   createdAt              DateTime       @default(now())
   updatedAt              DateTime       @updatedAt
-  routes                 Route[]
+  operatedRoutes         Route[]
   refreshTokens          RefreshToken[]
 
   @@map("users")
@@ -55,19 +55,67 @@ enum UserStatus {
   DELETED
 }
 
-model Route {
-  id          String   @id @default(uuid())
-  name        String
-  description String?  @db.Text
-  origin      String
-  destination String
-  distance    Float
-  duration    Int
-  price       Decimal  @db.Decimal(10, 2)
-  userId      String
-  user        User     @relation(fields: [userId], references: [id])
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+enum BusType {
+  STANDARD
+  VIP
+  LIMOUSINE
+  SLEEPER
+}
 
+enum RouteStatus {
+  ACTIVE
+  INACTIVE
+  DELETED
+}
+
+model Route {
+  id                 String      @id @default(uuid())
+  name               String
+  description        String?     @db.Text
+  
+  // Location
+  origin             String      // City name (e.g., "Ho Chi Minh City")
+  destination        String      // City name (e.g., "Da Lat")
+  departureLocation  String?     // Specific location (e.g., "Mien Tay Bus Station")
+  arrivalLocation    String?     // Specific location (e.g., "Da Lat Bus Station")
+  distance           Float?      // km
+  
+  // Time
+  departureTime      DateTime
+  arrivalTime        DateTime
+  duration           Int         // Duration in minutes
+  
+  // Bus info
+  busType            BusType     @default(STANDARD)
+  licensePlate       String?
+  totalSeats         Int         @default(45)
+  availableSeats     Int         @default(45)
+  
+  // Pricing
+  price              Decimal     @db.Decimal(10, 2)
+  
+  // Flexible JSON data
+  amenities          Json?       // [{id, name, icon}]
+  pickupPoints       Json?       // [{id, time, location, address}]
+  dropoffPoints      Json?       // [{id, time, location, address}]
+  policies           Json?       // [{type, title, description}]
+  images             Json?       // [url1, url2, ...]
+  
+  // Status
+  status             RouteStatus @default(ACTIVE)
+  deletedAt          DateTime?
+  
+  // Operator (User with role=OPERATOR)
+  operatorId         String
+  operator           User        @relation(fields: [operatorId], references: [id])
+  
+  // Audit
+  createdAt          DateTime    @default(now())
+  updatedAt          DateTime    @updatedAt
+
+  @@index([origin, destination])
+  @@index([departureTime])
+  @@index([status])
+  @@index([operatorId])
   @@map("routes")
 }

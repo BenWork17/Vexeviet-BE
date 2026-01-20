@@ -23,6 +23,11 @@ export const services: ServiceConfig[] = [
     prefix: '/routes',
     healthCheck: '/health',
   },
+  {
+    name: 'route-service-search',
+    url: process.env.ROUTE_SERVICE_URL || 'http://localhost:3002',
+    prefix: '/search',
+  },
 ];
 
 export const getServiceByPrefix = (prefix: string): ServiceConfig | undefined => {

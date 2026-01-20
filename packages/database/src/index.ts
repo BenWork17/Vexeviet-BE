@@ -17,3 +17,4 @@ if (process.env.NODE_ENV !== 'production') globalThis.prisma = prisma;
 
 export { prisma };
 export * from '@prisma/client';
+export { Decimal } from '@prisma/client/runtime/library';
