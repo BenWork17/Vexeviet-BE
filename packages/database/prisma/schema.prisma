@@ -1,0 +1,73 @@
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+model User {
+  id                     String         @id @default(uuid())
+  email                  String         @unique
+  password               String
+  firstName              String
+  lastName               String
+  phone                  String?        @unique
+  role                   UserRole       @default(CUSTOMER)
+  isEmailVerified        Boolean        @default(false)
+  isPhoneVerified        Boolean        @default(false)
+  registrationMethod     String?        // "email" | "phone"
+  termsAcceptedAt        DateTime?
+  verificationCode       String?        @db.VarChar(10)
+  verificationCodeExpiry DateTime?
+  status                 UserStatus     @default(PENDING_VERIFICATION)
+  createdAt              DateTime       @default(now())
+  updatedAt              DateTime       @updatedAt
+  routes                 Route[]
+  refreshTokens          RefreshToken[]
+
+  @@map("users")
+}
+
+model RefreshToken {
+  id        String   @id @default(uuid())
+  token     String   @unique @db.VarChar(500)
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+  @@map("refresh_tokens")
+}
+
+enum UserRole {
+  ADMIN
+  OPERATOR
+  CUSTOMER
+}
+
+enum UserStatus {
+  PENDING_VERIFICATION
+  ACTIVE
+  SUSPENDED
+  DELETED
+}
+
+model Route {
+  id          String   @id @default(uuid())
+  name        String
+  description String?  @db.Text
+  origin      String
+  destination String
+  distance    Float
+  duration    Int
+  price       Decimal  @db.Decimal(10, 2)
+  userId      String
+  user        User     @relation(fields: [userId], references: [id])
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@map("routes")
+}
