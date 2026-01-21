@@ -1,4 +1,6 @@
-import { PrismaClient } from '@prisma/client';
+import { PrismaClient, UserStatus, UserRole, RouteStatus, BookingStatus, SeatStatus, BusType, SeatType, SeatPosition } from '@prisma/client';
+
+export { UserStatus, UserRole, RouteStatus, BookingStatus, SeatStatus, BusType, SeatType, SeatPosition };
 
 declare global {
   // eslint-disable-next-line no-var

@@ -17,7 +17,7 @@ model User {
   role                   UserRole       @default(CUSTOMER)
   isEmailVerified        Boolean        @default(false)
   isPhoneVerified        Boolean        @default(false)
-  registrationMethod     String?        // "email" | "phone"
+  registrationMethod     String? // "email" | "phone"
   termsAcceptedAt        DateTime?
   verificationCode       String?        @db.VarChar(10)
   verificationCodeExpiry DateTime?
@@ -26,6 +26,7 @@ model User {
   updatedAt              DateTime       @updatedAt
   operatedRoutes         Route[]
   refreshTokens          RefreshToken[]
+  bookings               Booking[]
 
   @@map("users")
 }
@@ -68,54 +69,279 @@ enum RouteStatus {
   DELETED
 }
 
+// =====================================================
+// BUS TEMPLATE & SEAT LAYOUT (Master Data)
+// =====================================================
+
+enum SeatType {
+  NORMAL
+  VIP
+  SLEEPER
+  SEMI_SLEEPER
+}
+
+enum SeatPosition {
+  WINDOW
+  AISLE
+  MIDDLE
+}
+
+// BusTemplate: Định nghĩa các loại xe với layout ghế chuẩn
+model BusTemplate {
+  id           String   @id @default(uuid())
+  name         String   @db.VarChar(100) // "Limousine 34 chỗ"
+  busType      BusType
+  totalSeats   Int
+  floors       Int      @default(1) // 1 hoặc 2
+  rowsPerFloor Int
+  columns      String   @db.VarChar(20) // "A,B,_,C,D" (_ = lối đi)
+  description  String?  @db.Text
+  layoutImage  String?  @db.VarChar(500) // URL hình ảnh sơ đồ
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  seats  Seat[]
+  routes Route[]
+
+  @@index([busType])
+  @@index([isActive])
+  @@map("bus_templates")
+}
+
+// Seat: Định nghĩa từng ghế trong template
+model Seat {
+  id             String       @id @default(uuid())
+  busTemplateId  String
+  busTemplate    BusTemplate  @relation(fields: [busTemplateId], references: [id], onDelete: Cascade)
+  seatNumber     String       @db.VarChar(5) // "A1", "B2", "1A-L"
+  seatLabel      String?      @db.VarChar(10) // Label hiển thị (có thể khác seatNumber)
+  rowNumber      Int
+  columnPosition String       @db.VarChar(2) // A, B, C, D
+  floor          Int          @default(1) // 1 (dưới), 2 (trên)
+  seatType       SeatType     @default(NORMAL)
+  position       SeatPosition // WINDOW, AISLE, MIDDLE
+  priceModifier  Decimal      @default(0) @db.Decimal(10, 2) // Phụ thu/giảm
+  isAvailable    Boolean      @default(true) // false = ghế hỏng
+  metadata       Json? // {hasUSB, hasLegRoom, width, recline}
+  createdAt      DateTime     @default(now())
+
+  bookingSeats      BookingSeat[]
+  bookingPassengers BookingPassenger[]
+
+  @@unique([busTemplateId, seatNumber])
+  @@index([busTemplateId])
+  @@index([floor, rowNumber])
+  @@index([seatType])
+  @@index([isAvailable])
+  @@map("seats")
+}
+
+// =====================================================
+// ROUTE MODEL (với BusTemplate reference)
+// =====================================================
+
 model Route {
-  id                 String      @id @default(uuid())
-  name               String
-  description        String?     @db.Text
-  
+  id          String  @id @default(uuid())
+  name        String
+  description String? @db.Text
+
   // Location
-  origin             String      // City name (e.g., "Ho Chi Minh City")
-  destination        String      // City name (e.g., "Da Lat")
-  departureLocation  String?     // Specific location (e.g., "Mien Tay Bus Station")
-  arrivalLocation    String?     // Specific location (e.g., "Da Lat Bus Station")
-  distance           Float?      // km
-  
+  origin            String // City name (e.g., "Ho Chi Minh City")
+  destination       String // City name (e.g., "Da Lat")
+  departureLocation String? // Specific location (e.g., "Mien Tay Bus Station")
+  arrivalLocation   String? // Specific location (e.g., "Da Lat Bus Station")
+  distance          Float? // km
+
   // Time
-  departureTime      DateTime
-  arrivalTime        DateTime
-  duration           Int         // Duration in minutes
-  
-  // Bus info
-  busType            BusType     @default(STANDARD)
-  licensePlate       String?
-  totalSeats         Int         @default(45)
-  availableSeats     Int         @default(45)
-  
+  departureTime DateTime
+  arrivalTime   DateTime
+  duration      Int // Duration in minutes
+
+  // Bus Template reference (new)
+  busTemplateId String?
+  busTemplate   BusTemplate? @relation(fields: [busTemplateId], references: [id])
+
+  // Bus info (backward compatible)
+  busType        BusType @default(STANDARD)
+  licensePlate   String?
+  totalSeats     Int     @default(45)
+  availableSeats Int     @default(45)
+
   // Pricing
-  price              Decimal     @db.Decimal(10, 2)
-  
+  price Decimal @db.Decimal(10, 2)
+
   // Flexible JSON data
-  amenities          Json?       // [{id, name, icon}]
-  pickupPoints       Json?       // [{id, time, location, address}]
-  dropoffPoints      Json?       // [{id, time, location, address}]
-  policies           Json?       // [{type, title, description}]
-  images             Json?       // [url1, url2, ...]
-  
+  amenities     Json? // [{id, name, icon}]
+  pickupPoints  Json? // [{id, time, location, address}]
+  dropoffPoints Json? // [{id, time, location, address}]
+  policies      Json? // [{type, title, description}]
+  images        Json? // [url1, url2, ...]
+
   // Status
-  status             RouteStatus @default(ACTIVE)
-  deletedAt          DateTime?
-  
+  status    RouteStatus @default(ACTIVE)
+  deletedAt DateTime?
+
   // Operator (User with role=OPERATOR)
-  operatorId         String
-  operator           User        @relation(fields: [operatorId], references: [id])
-  
+  operatorId String
+  operator   User   @relation(fields: [operatorId], references: [id])
+
+  // Relations
+  bookings     Booking[]
+  bookingSeats BookingSeat[]
+
   // Audit
-  createdAt          DateTime    @default(now())
-  updatedAt          DateTime    @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@index([origin, destination])
   @@index([departureTime])
   @@index([status])
   @@index([operatorId])
+  @@index([busTemplateId])
   @@map("routes")
+}
+
+// =====================================================
+// BOOKING MODELS (Iteration 1-4)
+// =====================================================
+
+enum BookingStatus {
+  PENDING
+  CONFIRMED
+  CANCELLED
+  COMPLETED
+  EXPIRED
+}
+
+enum SeatStatus {
+  AVAILABLE
+  HELD
+  BOOKED
+  BLOCKED
+}
+
+model Booking {
+  id          String @id @default(uuid())
+  bookingCode String @unique @db.VarChar(10) // VXV123456
+
+  // User relation
+  userId String
+  user   User   @relation(fields: [userId], references: [id])
+
+  // Route relation
+  routeId String
+  route   Route  @relation(fields: [routeId], references: [id])
+
+  // Booking details
+  departureDate DateTime      @db.Date
+  status        BookingStatus @default(PENDING)
+
+  // Pricing
+  totalPrice Decimal @db.Decimal(10, 2)
+  serviceFee Decimal @default(0) @db.Decimal(10, 2)
+  discount   Decimal @default(0) @db.Decimal(10, 2)
+
+  // Timing
+  paymentDeadline DateTime
+
+  // Pickup/Dropoff
+  pickupPointId  String?
+  dropoffPointId String?
+
+  // Contact
+  contactEmail String @db.VarChar(255)
+  contactPhone String @db.VarChar(20)
+
+  // Promo & Idempotency
+  promoCode      String? @db.VarChar(50)
+  idempotencyKey String  @unique @db.VarChar(100)
+
+  // Notes
+  notes String? @db.Text
+
+  // Status timestamps
+  confirmedAt        DateTime?
+  cancelledAt        DateTime?
+  cancellationReason String?   @db.Text
+
+  // Audit
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  passengers BookingPassenger[]
+  seats      BookingSeat[]
+
+  @@index([bookingCode])
+  @@index([userId])
+  @@index([status, createdAt])
+  @@index([routeId, departureDate])
+  @@index([idempotencyKey])
+  @@map("bookings")
+}
+
+model BookingPassenger {
+  id String @id @default(uuid())
+
+  // Booking relation
+  bookingId String
+  booking   Booking @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+
+  // Seat relation (new - reference to master Seat)
+  seatId String?
+  seat   Seat?   @relation(fields: [seatId], references: [id])
+
+  // Passenger details
+  firstName   String    @db.VarChar(50)
+  lastName    String    @db.VarChar(50)
+  seatNumber  String    @db.VarChar(5) // Denormalized for quick access
+  idNumber    String?   @db.VarChar(20)
+  dateOfBirth DateTime? @db.Date
+
+  // Audit
+  createdAt DateTime @default(now())
+
+  @@index([bookingId])
+  @@index([seatId])
+  @@map("booking_passengers")
+}
+
+model BookingSeat {
+  id String @id @default(uuid())
+
+  // Booking relation
+  bookingId String
+  booking   Booking @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+
+  // Route relation
+  routeId String
+  route   Route  @relation(fields: [routeId], references: [id])
+
+  // Seat relation (new - reference to master Seat)
+  seatId String?
+  seat   Seat?   @relation(fields: [seatId], references: [id])
+
+  // Seat details
+  departureDate DateTime   @db.Date
+  seatNumber    String     @db.VarChar(5) // Denormalized for quick query
+  status        SeatStatus @default(HELD)
+
+  // Lock timing
+  lockedAt    DateTime @default(now())
+  lockedUntil DateTime
+
+  // Price at booking time (base + modifier)
+  price Decimal? @db.Decimal(10, 2)
+
+  // Audit
+  createdAt DateTime @default(now())
+
+  @@unique([routeId, departureDate, seatNumber])
+  @@index([routeId, departureDate, seatNumber])
+  @@index([status])
+  @@index([bookingId])
+  @@index([seatId])
+  @@index([lockedUntil])
+  @@map("booking_seats")
 }

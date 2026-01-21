@@ -637,42 +637,143 @@ async function createBooking(request: CreateBookingRequest) {
 }
 ```
 
-**Database Schema (PostgreSQL):**
+**Database Schema (MySQL - Prisma):**
+
+> **Architecture Decision: BusTemplate + Seat Pattern**
+> 
+> Chúng ta sử dụng mô hình **BusTemplate → Seat** thay vì gắn Seat trực tiếp vào Route.
+> Điều này cho phép:
+> - ✅ Tái sử dụng layout ghế cho nhiều route cùng loại xe
+> - ✅ Chuẩn hóa sơ đồ ghế theo từng loại xe (STANDARD 45 chỗ, LIMOUSINE 34 chỗ, SLEEPER 40 giường, ...)
+> - ✅ Dễ dàng thay đổi layout mà không ảnh hưởng đến route
+> - ✅ Hỗ trợ xe 2 tầng, xe giường nằm, xe VIP với layout khác nhau
+
 ```sql
-CREATE TABLE bookings (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  booking_code VARCHAR(10) UNIQUE NOT NULL,
-  user_id UUID REFERENCES users(id),
-  route_id UUID REFERENCES routes(id),
-  departure_date DATE NOT NULL,
-  status VARCHAR(20) NOT NULL,
-  total_price DECIMAL(10, 2) NOT NULL,
-  payment_deadline TIMESTAMP NOT NULL,
+-- =====================================================
+-- BUS TEMPLATE & SEAT LAYOUT (Master Data)
+-- =====================================================
+
+-- Bus Template: Định nghĩa các loại xe với layout ghế chuẩn
+CREATE TABLE bus_templates (
+  id VARCHAR(36) PRIMARY KEY,
+  name VARCHAR(100) NOT NULL,              -- "Limousine 34 chỗ", "Giường nằm 40 giường"
+  bus_type ENUM('STANDARD', 'VIP', 'LIMOUSINE', 'SLEEPER') NOT NULL,
+  total_seats INT NOT NULL,                 -- Tổng số ghế/giường
+  floors INT NOT NULL DEFAULT 1,            -- Số tầng (1 hoặc 2)
+  rows_per_floor INT NOT NULL,              -- Số hàng mỗi tầng
+  columns VARCHAR(20) NOT NULL,             -- "A,B,C,D" hoặc "A,B,_,C,D" (_ = lối đi)
+  description TEXT,
+  layout_image VARCHAR(500),                -- URL hình ảnh sơ đồ ghế
+  is_active BOOLEAN DEFAULT TRUE,
   created_at TIMESTAMP DEFAULT NOW(),
-  updated_at TIMESTAMP DEFAULT NOW(),
+  updated_at TIMESTAMP DEFAULT NOW() ON UPDATE NOW(),
+  INDEX idx_bus_type (bus_type),
+  INDEX idx_is_active (is_active)
+);
+
+-- Seat: Định nghĩa từng ghế trong template
+CREATE TABLE seats (
+  id VARCHAR(36) PRIMARY KEY,
+  bus_template_id VARCHAR(36) NOT NULL,
+  seat_number VARCHAR(5) NOT NULL,          -- "A1", "B2", "1A", "1B"
+  seat_label VARCHAR(10),                   -- Label hiển thị cho khách (có thể khác seat_number)
+  row_number INT NOT NULL,                  -- Hàng: 1, 2, 3, ...
+  column_position VARCHAR(2) NOT NULL,      -- Cột: A, B, C, D
+  floor INT NOT NULL DEFAULT 1,             -- Tầng: 1 (dưới), 2 (trên)
+  seat_type ENUM('NORMAL', 'VIP', 'SLEEPER', 'SEMI_SLEEPER') NOT NULL DEFAULT 'NORMAL',
+  position ENUM('WINDOW', 'AISLE', 'MIDDLE') NOT NULL, -- Vị trí: cửa sổ, lối đi, giữa
+  price_modifier DECIMAL(10, 2) DEFAULT 0,  -- Phụ thu/giảm giá (VD: +50000 cho VIP)
+  is_available BOOLEAN DEFAULT TRUE,        -- Ghế có thể đặt không (ghế hỏng = FALSE)
+  metadata JSON,                            -- Dữ liệu bổ sung: {width, recline, hasUSB, ...}
+  created_at TIMESTAMP DEFAULT NOW(),
+  FOREIGN KEY (bus_template_id) REFERENCES bus_templates(id) ON DELETE CASCADE,
+  UNIQUE KEY uk_template_seat (bus_template_id, seat_number),
+  INDEX idx_bus_template (bus_template_id),
+  INDEX idx_floor_row (floor, row_number),
+  INDEX idx_seat_type (seat_type),
+  INDEX idx_is_available (is_available)
+);
+
+-- =====================================================
+-- ROUTE với BusTemplate reference
+-- =====================================================
+
+-- Route giờ reference tới BusTemplate thay vì tự định nghĩa layout
+ALTER TABLE routes ADD COLUMN bus_template_id VARCHAR(36);
+ALTER TABLE routes ADD FOREIGN KEY (bus_template_id) REFERENCES bus_templates(id);
+ALTER TABLE routes ADD INDEX idx_bus_template (bus_template_id);
+
+-- =====================================================
+-- BOOKING MODELS
+-- =====================================================
+
+CREATE TABLE bookings (
+  id VARCHAR(36) PRIMARY KEY,
+  booking_code VARCHAR(10) UNIQUE NOT NULL,
+  user_id VARCHAR(36) NOT NULL,
+  route_id VARCHAR(36) NOT NULL,
+  departure_date DATE NOT NULL,
+  status ENUM('PENDING', 'CONFIRMED', 'CANCELLED', 'COMPLETED', 'EXPIRED') NOT NULL DEFAULT 'PENDING',
+  total_price DECIMAL(10, 2) NOT NULL,
+  service_fee DECIMAL(10, 2) DEFAULT 0,
+  discount DECIMAL(10, 2) DEFAULT 0,
+  payment_deadline TIMESTAMP NOT NULL,
+  pickup_point_id VARCHAR(50),
+  dropoff_point_id VARCHAR(50),
+  contact_email VARCHAR(255) NOT NULL,
+  contact_phone VARCHAR(20) NOT NULL,
+  promo_code VARCHAR(50),
+  idempotency_key VARCHAR(100) UNIQUE NOT NULL,
+  notes TEXT,
+  confirmed_at TIMESTAMP,
+  cancelled_at TIMESTAMP,
+  cancellation_reason TEXT,
+  created_at TIMESTAMP DEFAULT NOW(),
+  updated_at TIMESTAMP DEFAULT NOW() ON UPDATE NOW(),
+  FOREIGN KEY (user_id) REFERENCES users(id),
+  FOREIGN KEY (route_id) REFERENCES routes(id),
   INDEX idx_booking_code (booking_code),
   INDEX idx_user_id (user_id),
-  INDEX idx_status_created (status, created_at)
+  INDEX idx_status_created (status, created_at),
+  INDEX idx_route_departure (route_id, departure_date)
 );
 
 CREATE TABLE booking_passengers (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  booking_id UUID REFERENCES bookings(id) ON DELETE CASCADE,
+  id VARCHAR(36) PRIMARY KEY,
+  booking_id VARCHAR(36) NOT NULL,
   first_name VARCHAR(50) NOT NULL,
   last_name VARCHAR(50) NOT NULL,
-  seat_number VARCHAR(5) NOT NULL,
+  seat_id VARCHAR(36) NOT NULL,             -- Reference tới Seat
+  seat_number VARCHAR(5) NOT NULL,          -- Denormalized for quick access
   id_number VARCHAR(20),
-  date_of_birth DATE
+  date_of_birth DATE,
+  created_at TIMESTAMP DEFAULT NOW(),
+  FOREIGN KEY (booking_id) REFERENCES bookings(id) ON DELETE CASCADE,
+  FOREIGN KEY (seat_id) REFERENCES seats(id),
+  INDEX idx_booking_id (booking_id)
 );
 
+-- BookingSeat: Tracking trạng thái ghế theo ngày khởi hành
 CREATE TABLE booking_seats (
-  booking_id UUID REFERENCES bookings(id) ON DELETE CASCADE,
-  route_id UUID REFERENCES routes(id),
-  seat_number VARCHAR(5) NOT NULL,
-  status VARCHAR(20) NOT NULL,
+  id VARCHAR(36) PRIMARY KEY,
+  booking_id VARCHAR(36) NOT NULL,
+  route_id VARCHAR(36) NOT NULL,
+  seat_id VARCHAR(36) NOT NULL,             -- Reference tới Seat (master)
+  departure_date DATE NOT NULL,
+  seat_number VARCHAR(5) NOT NULL,          -- Denormalized for quick query
+  status ENUM('AVAILABLE', 'HELD', 'BOOKED', 'BLOCKED') NOT NULL DEFAULT 'HELD',
   locked_at TIMESTAMP DEFAULT NOW(),
-  PRIMARY KEY (booking_id, seat_number),
-  INDEX idx_route_seat (route_id, seat_number, status)
+  locked_until TIMESTAMP NOT NULL,
+  price DECIMAL(10, 2) NOT NULL,            -- Giá tại thời điểm đặt (base + modifier)
+  created_at TIMESTAMP DEFAULT NOW(),
+  FOREIGN KEY (booking_id) REFERENCES bookings(id) ON DELETE CASCADE,
+  FOREIGN KEY (route_id) REFERENCES routes(id),
+  FOREIGN KEY (seat_id) REFERENCES seats(id),
+  UNIQUE KEY uk_route_date_seat (route_id, departure_date, seat_number),
+  INDEX idx_route_date_seat (route_id, departure_date, seat_number),
+  INDEX idx_status (status),
+  INDEX idx_booking_id (booking_id),
+  INDEX idx_locked_until (locked_until)
 );
 ```
 
@@ -686,6 +787,258 @@ CREATE TABLE booking_seats (
 ✅ AC6: Transaction rollback on any failure (atomicity)
 ✅ AC7: Booking code generated (alphanumeric, 10 chars, unique)
 ✅ AC8: Response time p95 < 1s
+✅ AC9: BusTemplate loaded with seats when route is fetched
+✅ AC10: Seat price = base route price + seat.priceModifier
+```
+
+---
+
+### 3.1. Seat Availability API
+
+**Endpoint:** `GET /api/v1/seats/availability`
+
+**Query Parameters:**
+```typescript
+interface SeatAvailabilityParams {
+  routeId: string;           // UUID của route
+  departureDate: string;     // YYYY-MM-DD
+}
+```
+
+**Response:**
+```typescript
+interface SeatAvailabilityResponse {
+  success: boolean;
+  data: {
+    routeId: string;
+    departureDate: string;
+    busTemplate: BusTemplateInfo;
+    seats: SeatInfo[];
+    summary: {
+      totalSeats: number;
+      availableSeats: number;
+      bookedSeats: number;
+      heldSeats: number;
+      blockedSeats: number;
+    };
+  };
+}
+
+interface BusTemplateInfo {
+  id: string;
+  name: string;                    // "Limousine 34 chỗ"
+  busType: "STANDARD" | "VIP" | "LIMOUSINE" | "SLEEPER";
+  totalSeats: number;
+  floors: number;                  // 1 hoặc 2
+  rowsPerFloor: number;
+  columns: string[];               // ["A", "B", "_", "C", "D"] (_ = lối đi)
+  layoutImage?: string;            // URL hình ảnh sơ đồ
+}
+
+interface SeatInfo {
+  id: string;                      // Seat master ID
+  seatNumber: string;              // "A1", "B2"
+  seatLabel: string;               // Label hiển thị (có thể khác seatNumber)
+  row: number;                     // Hàng: 1, 2, 3, ...
+  column: string;                  // Cột: A, B, C, D
+  floor: number;                   // Tầng: 1 (dưới), 2 (trên)
+  seatType: "NORMAL" | "VIP" | "SLEEPER" | "SEMI_SLEEPER";
+  position: "WINDOW" | "AISLE" | "MIDDLE";
+  
+  // Pricing
+  basePrice: number;               // Giá route gốc
+  priceModifier: number;           // Phụ thu/giảm (+50000, -10000)
+  finalPrice: number;              // basePrice + priceModifier
+  
+  // Availability for this date
+  status: "AVAILABLE" | "HELD" | "BOOKED" | "BLOCKED";
+  isSelectable: boolean;           // true nếu status = AVAILABLE
+  
+  // Metadata
+  metadata?: {
+    hasUSB?: boolean;
+    hasLegRoom?: boolean;
+    width?: string;                // "standard", "wide"
+    recline?: string;              // "fixed", "partial", "full"
+  };
+}
+```
+
+**Business Logic:**
+```typescript
+async function getSeatAvailability(routeId: string, departureDate: string) {
+  // 1. Get route with BusTemplate
+  const route = await prisma.route.findUnique({
+    where: { id: routeId },
+    include: {
+      busTemplate: {
+        include: {
+          seats: {
+            where: { isAvailable: true },
+            orderBy: [{ floor: 'asc' }, { rowNumber: 'asc' }, { columnPosition: 'asc' }]
+          }
+        }
+      }
+    }
+  });
+
+  if (!route || !route.busTemplate) {
+    throw new Error("ROUTE_NOT_FOUND");
+  }
+
+  // 2. Get booked/held seats for this date
+  const bookedSeats = await prisma.bookingSeat.findMany({
+    where: {
+      routeId,
+      departureDate: new Date(departureDate),
+      status: { in: ['HELD', 'BOOKED', 'BLOCKED'] },
+      // Filter out expired holds
+      OR: [
+        { status: { in: ['BOOKED', 'BLOCKED'] } },
+        { status: 'HELD', lockedUntil: { gt: new Date() } }
+      ]
+    }
+  });
+
+  const bookedSeatMap = new Map(bookedSeats.map(s => [s.seatId, s.status]));
+
+  // 3. Map seats with availability
+  const seats = route.busTemplate.seats.map(seat => ({
+    id: seat.id,
+    seatNumber: seat.seatNumber,
+    seatLabel: seat.seatLabel || seat.seatNumber,
+    row: seat.rowNumber,
+    column: seat.columnPosition,
+    floor: seat.floor,
+    seatType: seat.seatType,
+    position: seat.position,
+    basePrice: Number(route.price),
+    priceModifier: Number(seat.priceModifier),
+    finalPrice: Number(route.price) + Number(seat.priceModifier),
+    status: bookedSeatMap.get(seat.id) || 'AVAILABLE',
+    isSelectable: !bookedSeatMap.has(seat.id),
+    metadata: seat.metadata
+  }));
+
+  // 4. Calculate summary
+  const summary = {
+    totalSeats: seats.length,
+    availableSeats: seats.filter(s => s.status === 'AVAILABLE').length,
+    bookedSeats: seats.filter(s => s.status === 'BOOKED').length,
+    heldSeats: seats.filter(s => s.status === 'HELD').length,
+    blockedSeats: seats.filter(s => s.status === 'BLOCKED').length
+  };
+
+  return {
+    routeId,
+    departureDate,
+    busTemplate: {
+      id: route.busTemplate.id,
+      name: route.busTemplate.name,
+      busType: route.busTemplate.busType,
+      totalSeats: route.busTemplate.totalSeats,
+      floors: route.busTemplate.floors,
+      rowsPerFloor: route.busTemplate.rowsPerFloor,
+      columns: route.busTemplate.columns.split(','),
+      layoutImage: route.busTemplate.layoutImage
+    },
+    seats,
+    summary
+  };
+}
+```
+
+**Caching Strategy (Redis):**
+```typescript
+// Cache key format
+const cacheKey = `seats:${routeId}:${departureDate}`;
+
+// Cache TTL: 30 seconds (short because availability changes frequently)
+await redis.setex(cacheKey, 30, JSON.stringify(result));
+
+// Cache invalidation triggers:
+// - New booking created (HELD)
+// - Booking confirmed (BOOKED)
+// - Booking cancelled (release seat)
+// - Hold expired (background job)
+```
+
+**Acceptance Criteria (Seat Availability API):**
+```
+✅ AC1: Response includes full seat layout from BusTemplate
+✅ AC2: Each seat shows real-time availability status
+✅ AC3: Expired holds (lockedUntil < now) are treated as AVAILABLE
+✅ AC4: Price includes base route price + seat modifier
+✅ AC5: Response includes floor/row/column for UI rendering
+✅ AC6: Cache TTL 30 seconds to balance freshness vs performance
+✅ AC7: Response time p95 < 200ms (with cache hit)
+✅ AC8: Summary counts all seat statuses correctly
+```
+
+---
+
+### 3.2. Seat Layout Examples
+
+**Example 1: Standard Bus 45 chỗ (1 tầng)**
+```json
+{
+  "busTemplate": {
+    "id": "tpl-standard-45",
+    "name": "Xe ghế ngồi 45 chỗ",
+    "busType": "STANDARD",
+    "totalSeats": 45,
+    "floors": 1,
+    "rowsPerFloor": 11,
+    "columns": ["A", "B", "_", "C", "D"]
+  },
+  "seats": [
+    { "seatNumber": "A1", "row": 1, "column": "A", "floor": 1, "position": "WINDOW", "status": "AVAILABLE" },
+    { "seatNumber": "B1", "row": 1, "column": "B", "floor": 1, "position": "AISLE", "status": "BOOKED" },
+    { "seatNumber": "C1", "row": 1, "column": "C", "floor": 1, "position": "AISLE", "status": "AVAILABLE" },
+    { "seatNumber": "D1", "row": 1, "column": "D", "floor": 1, "position": "WINDOW", "status": "HELD" }
+  ]
+}
+```
+
+**Example 2: Limousine 34 chỗ (ghế VIP)**
+```json
+{
+  "busTemplate": {
+    "id": "tpl-limousine-34",
+    "name": "Limousine 34 chỗ",
+    "busType": "LIMOUSINE",
+    "totalSeats": 34,
+    "floors": 1,
+    "rowsPerFloor": 9,
+    "columns": ["A", "_", "B", "_", "C"]
+  },
+  "seats": [
+    { "seatNumber": "A1", "row": 1, "column": "A", "floor": 1, "seatType": "VIP", "priceModifier": 50000 },
+    { "seatNumber": "B1", "row": 1, "column": "B", "floor": 1, "seatType": "VIP", "priceModifier": 50000 },
+    { "seatNumber": "C1", "row": 1, "column": "C", "floor": 1, "seatType": "VIP", "priceModifier": 50000 }
+  ]
+}
+```
+
+**Example 3: Sleeper Bus 40 giường (2 tầng)**
+```json
+{
+  "busTemplate": {
+    "id": "tpl-sleeper-40",
+    "name": "Giường nằm 40 giường",
+    "busType": "SLEEPER",
+    "totalSeats": 40,
+    "floors": 2,
+    "rowsPerFloor": 10,
+    "columns": ["A", "_", "B", "C"]
+  },
+  "seats": [
+    { "seatNumber": "1A-L", "row": 1, "column": "A", "floor": 1, "seatType": "SLEEPER", "seatLabel": "1A Tầng dưới" },
+    { "seatNumber": "1B-L", "row": 1, "column": "B", "floor": 1, "seatType": "SLEEPER", "seatLabel": "1B Tầng dưới" },
+    { "seatNumber": "1A-U", "row": 1, "column": "A", "floor": 2, "seatType": "SLEEPER", "seatLabel": "1A Tầng trên", "priceModifier": -20000 },
+    { "seatNumber": "1B-U", "row": 1, "column": "B", "floor": 2, "seatType": "SLEEPER", "seatLabel": "1B Tầng trên", "priceModifier": -20000 }
+  ]
+}
 ```
 
 ---

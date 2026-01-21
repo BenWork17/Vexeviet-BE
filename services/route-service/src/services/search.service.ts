@@ -115,12 +115,12 @@ export class SearchService {
         status: RouteStatus.ACTIVE,
         [field]: { contains: query },
       },
-      select: { [field]: true },
+      select: { origin: true, destination: true },
       distinct: [field],
       take: 10,
     });
 
-    const suggestions = routes.map((r) => r[field] as string);
+    const suggestions = routes.map((r) => field === 'origin' ? r.origin : r.destination);
 
     await cacheService.set(cacheKey, suggestions, 600);
 

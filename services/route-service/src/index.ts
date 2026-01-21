@@ -1,6 +1,5 @@
 import express, { Application } from 'express';
 import cors from 'cors';
-import { config } from '@vexeviet/config';
 import routes from './routes';
 import { errorHandler, notFoundHandler } from './middlewares/error.middleware';
 

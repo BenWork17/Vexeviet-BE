@@ -50,20 +50,12 @@ services.forEach((service) => {
       changeOrigin: true,
       timeout: 30000, // 30 seconds
       proxyTimeout: 30000,
-      pathRewrite: (path) => {
-        // Gateway: /api/v1/auth/login -> User Service: /api/v1/auth/login
-        // Keep the full path as-is (services already expect /api/v1)
-        console.log(`[PROXY PATH] ${path}`);
-        return path;
-      },
       onProxyReq: (proxyReq, req) => {
         proxyReq.setHeader('X-Forwarded-By', 'VeXeViet-Gateway');
-        console.log(`[PROXY] ${req.method} ${req.url} -> ${service.url}`);
+        console.log(`[PROXY] ${req.method} ${req.originalUrl} -> ${service.url}`);
       },
       onProxyRes: (proxyRes, req) => {
-        console.log(
-          `[PROXY] ${req.method} ${proxyPath}${req.url} <- ${proxyRes.statusCode}`
-        );
+        console.log(`[PROXY] ${req.method} ${req.originalUrl} <- ${proxyRes.statusCode}`);
       },
       onError: (err, _req, res) => {
         console.error(`[PROXY ERROR] ${service.name}:`, err.message);

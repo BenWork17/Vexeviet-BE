@@ -95,6 +95,8 @@
 - BE-103: Search Service - Basic search by origin/destination/date
 - BE-104: Booking Service - Create booking, seat selection logic
 - BE-105: Shared libraries - Error handling, logging, config
+- **BE-106: BusTemplate & Seat Service** - Master data cho layout ghế các loại xe
+- **BE-107: Seat Availability API** - Real-time seat availability với BusTemplate
 
 **Team 4 (Payment & Integration) - PI 1:**
 - BE-151: API Gateway setup & configuration
@@ -127,10 +129,12 @@
 - Route Service - CRUD operations
 - Search Service - Basic search logic
 - Redis cache integration
+- **BusTemplate & Seat Master Data** - Schema và seed data cho các loại xe
 
 **Iteration 1-4 (Tuần 7-8):**
 - Booking Service - Seat reservation
 - Booking Service - Concurrency handling (pessimistic locking)
+- **Seat Availability API** - GET /api/v1/seats/availability
 - Message queue setup (RabbitMQ)
 
 **Iteration 1-5 (Tuần 9-10):**

@@ -1,4 +1,4 @@
-import { prisma } from '../config/database';
+import { prisma, UserStatus } from '../config/database';
 import { CryptoUtils } from '../utils/crypto';
 import { emailService } from '../utils/email';
 import { smsService } from '../utils/sms';
@@ -70,7 +70,7 @@ export class OTPService {
       await prisma.user.update({
         where: { id: userId },
         data: {
-          status: 'ACTIVE',
+          status: UserStatus.ACTIVE,
           isEmailVerified: user.registrationMethod === 'email' ? true : user.isEmailVerified,
           isPhoneVerified: user.registrationMethod === 'phone' ? true : user.isPhoneVerified,
           verificationCode: null,

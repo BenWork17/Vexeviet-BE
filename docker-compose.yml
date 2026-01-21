@@ -33,9 +33,31 @@ services:
       timeout: 3s
       retries: 5
 
+  # RabbitMQ for message queue (Iteration 1-4)
+  rabbitmq:
+    image: rabbitmq:3.13-management-alpine
+    container_name: vexeviet-rabbitmq
+    restart: unless-stopped
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-guest}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASS:-guest}
+    ports:
+      - "5672:5672"   # AMQP
+      - "15672:15672" # Management UI
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+    networks:
+      - vexeviet-network
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
 volumes:
   mysql_data:
   redis_data:
+  rabbitmq_data:
 
 networks:
   vexeviet-network:

@@ -10,8 +10,8 @@
   ],
   "scripts": {
     "dev": "turbo run dev",
-    "dev:all": "concurrently -n \"docker,user,route,gateway\" -c \"blue,green,yellow,magenta\" \"pnpm docker:up\" \"pnpm --filter @vexeviet/user-service dev\" \"pnpm --filter @vexeviet/route-service dev\" \"pnpm --filter @vexeviet/api-gateway dev\"",
-    "dev:services": "concurrently -n \"user,route,gateway\" -c \"green,yellow,magenta\" \"pnpm --filter @vexeviet/user-service dev\" \"pnpm --filter @vexeviet/route-service dev\" \"pnpm --filter @vexeviet/api-gateway dev\"",
+    "dev:all": "concurrently -n \"docker,user,route,booking,gateway\" -c \"blue,green,yellow,cyan,magenta\" \"pnpm docker:up\" \"pnpm --filter @vexeviet/user-service dev\" \"pnpm --filter @vexeviet/route-service dev\" \"pnpm --filter @vexeviet/booking-service dev\" \"pnpm --filter @vexeviet/api-gateway dev\"",
+    "dev:services": "concurrently -n \"user,route,booking,gateway\" -c \"green,yellow,cyan,magenta\" \"pnpm --filter @vexeviet/user-service dev\" \"pnpm --filter @vexeviet/route-service dev\" \"pnpm --filter @vexeviet/booking-service dev\" \"pnpm --filter @vexeviet/api-gateway dev\"",
     "build": "turbo run build",
     "test": "turbo run test",
     "lint": "turbo run lint",
@@ -21,15 +21,19 @@
     "docker:up": "docker-compose up -d",
     "docker:down": "docker-compose down",
     "prisma:generate": "turbo run prisma:generate",
-    "prisma:migrate": "turbo run prisma:migrate"
+    "prisma:migrate": "turbo run prisma:migrate",
+    "db:seed": "dotenv -e .env -- ts-node packages/database/prisma/seed.ts",
+    "db:seed-routes": "dotenv -e .env -- ts-node packages/database/prisma/seed-full-routes.ts"
   },
   "devDependencies": {
+    "@types/node": "^25.0.9",
     "@typescript-eslint/eslint-plugin": "^6.15.0",
     "@typescript-eslint/parser": "^6.15.0",
     "concurrently": "^9.2.1",
     "dotenv-cli": "^7.3.0",
     "eslint": "^8.56.0",
     "prettier": "^3.1.0",
+    "ts-node": "^10.9.2",
     "turbo": "^1.11.0",
     "typescript": "^5.3.0"
   },

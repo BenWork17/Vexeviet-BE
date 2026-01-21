@@ -28,6 +28,18 @@ export const services: ServiceConfig[] = [
     url: process.env.ROUTE_SERVICE_URL || 'http://localhost:3002',
     prefix: '/search',
   },
+  // Booking Service (Iteration 1-4)
+  {
+    name: 'booking-service',
+    url: process.env.BOOKING_SERVICE_URL || 'http://localhost:3003',
+    prefix: '/bookings',
+    healthCheck: '/health',
+  },
+  {
+    name: 'booking-service-seats',
+    url: process.env.BOOKING_SERVICE_URL || 'http://localhost:3003',
+    prefix: '/seats',
+  },
 ];
 
 export const getServiceByPrefix = (prefix: string): ServiceConfig | undefined => {
