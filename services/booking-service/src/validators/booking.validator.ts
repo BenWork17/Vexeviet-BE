@@ -5,7 +5,7 @@ import { Request, Response, NextFunction } from 'express';
 const passengerSchema = z.object({
   firstName: z.string().min(1).max(50),
   lastName: z.string().min(1).max(50),
-  seatNumber: z.string().min(2).max(5).regex(/^[A-D]\d{1,2}$/),
+  seatNumber: z.string().min(2).max(5).regex(/^\d{1,2}[A-D](-[LU])?$/),
   idNumber: z.string().max(20).optional(),
   dateOfBirth: z.string().optional(),
 });
@@ -28,7 +28,7 @@ export const createBookingSchema = z.object({
   routeId: z.string().uuid(),
   departureDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/), // YYYY-MM-DD
   passengers: z.array(passengerSchema).min(1).max(10),
-  seats: z.array(z.string().regex(/^[A-D]\d{1,2}$/)).min(1).max(10),
+  seats: z.array(z.string().regex(/^\d{1,2}[A-D](-[LU])?$/)).min(1).max(10),
   pickupPointId: z.string(),
   dropoffPointId: z.string(),
   contactInfo: contactInfoSchema,
@@ -67,14 +67,14 @@ export const seatAvailabilitySchema = z.object({
 export const checkSeatsSchema = z.object({
   routeId: z.string().uuid(),
   departureDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
-  seats: z.array(z.string().regex(/^[A-D]\d{1,2}$/)).min(1).max(10),
+  seats: z.array(z.string().regex(/^\d{1,2}[A-D](-[LU])?$/)).min(1).max(10),
 });
 
 // Hold seats request schema
 export const holdSeatsSchema = z.object({
   routeId: z.string().uuid(),
   departureDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
-  seats: z.array(z.string().regex(/^[A-D]\d{1,2}$/)).min(1).max(10),
+  seats: z.array(z.string().regex(/^\d{1,2}[A-D](-[LU])?$/)).min(1).max(10),
   ttlSeconds: z.number().min(60).max(1800).optional(), // 1-30 minutes
 });
 

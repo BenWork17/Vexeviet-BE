@@ -27,6 +27,7 @@ model User {
   operatedRoutes         Route[]
   refreshTokens          RefreshToken[]
   bookings               Booking[]
+  buses                  Bus[]          @relation("OperatorBuses")
 
   @@map("users")
 }
@@ -102,11 +103,37 @@ model BusTemplate {
   updatedAt    DateTime @updatedAt
 
   seats  Seat[]
-  routes Route[]
+  buses  Bus[]   // New: One template used by many buses
+  routes Route[] // Fallback relation
 
   @@index([busType])
   @@index([isActive])
   @@map("bus_templates")
+}
+
+// Bus: Một chiếc xe cụ thể của một nhà xe
+model Bus {
+  id            String      @id @default(uuid())
+  licensePlate  String      @unique // "51B-123.45"
+  operatorId    String
+  operator      User        @relation("OperatorBuses", fields: [operatorId], references: [id])
+  busTemplateId String
+  busTemplate   BusTemplate @relation(fields: [busTemplateId], references: [id])
+  status        BusStatus   @default(ACTIVE)
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+
+  routes Route[] // Một chiếc xe chạy nhiều chuyến
+
+  @@index([operatorId])
+  @@index([busTemplateId])
+  @@map("buses")
+}
+
+enum BusStatus {
+  ACTIVE
+  MAINTENANCE
+  INACTIVE
 }
 
 // Seat: Định nghĩa từng ghế trong template
@@ -158,16 +185,20 @@ model Route {
   arrivalTime   DateTime
   duration      Int // Duration in minutes
 
-  // Bus Template reference (new)
+  // Reference to specific Bus
+  busId String?
+  bus   Bus?    @relation(fields: [busId], references: [id])
+
+  // Bus Template reference (fallback)
   busTemplateId String?
   busTemplate   BusTemplate? @relation(fields: [busTemplateId], references: [id])
 
   // Bus info (backward compatible)
-  busType        BusType @default(STANDARD)
-  licensePlate   String?
-  totalSeats     Int     @default(45)
-  availableSeats Int     @default(45)
-
+  busType      BusType @default(STANDARD)
+  licensePlate String?
+  
+  // totalSeats and availableSeats removed as they should be derived from BusTemplate and BookingSeat
+  
   // Pricing
   price Decimal @db.Decimal(10, 2)
 
@@ -310,9 +341,12 @@ model BookingPassenger {
 model BookingSeat {
   id String @id @default(uuid())
 
-  // Booking relation
-  bookingId String
-  booking   Booking @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  // Booking relation (optional - null when seat is just held, set when booking confirmed)
+  bookingId String?
+  booking   Booking? @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+
+  // Hold ID - temporary identifier for held seats before booking is created
+  holdId String? @db.VarChar(36)
 
   // Route relation
   routeId String
@@ -341,6 +375,7 @@ model BookingSeat {
   @@index([routeId, departureDate, seatNumber])
   @@index([status])
   @@index([bookingId])
+  @@index([holdId])
   @@index([seatId])
   @@index([lockedUntil])
   @@map("booking_seats")

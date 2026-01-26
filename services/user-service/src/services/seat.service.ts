@@ -129,7 +129,7 @@ export class SeatService {
 
     // 4. Calculate summary
     const summary: SeatAvailabilitySummary = {
-      totalSeats: seats.length,
+      totalSeats: busTemplate.totalSeats, // Dùng tổng ghế danh định từ Template
       availableSeats: seats.filter((s) => s.status === 'AVAILABLE').length,
       bookedSeats: seats.filter((s) => s.status === 'BOOKED').length,
       heldSeats: seats.filter((s) => s.status === 'HELD').length,

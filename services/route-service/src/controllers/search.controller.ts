@@ -63,8 +63,9 @@ export class SearchController {
 
   getPopularRoutes = async (req: Request, res: Response): Promise<void> => {
     try {
-      const limit = req.query.limit ? Number(req.query.limit) : 10;
-      const routes = await searchService.getPopularRoutes(limit);
+      const limitParam = req.query.limit;
+      const limit = limitParam && typeof limitParam === 'string' ? parseInt(limitParam, 10) : 10;
+      const routes = await searchService.getPopularRoutes(isNaN(limit) ? 10 : limit);
 
       res.status(200).json({
         success: true,

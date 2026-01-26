@@ -26,15 +26,25 @@ export class SeatService {
     const { routeId, departureDate } = request;
     const date = new Date(departureDate);
 
-    // Get route info
+    // Get route with busTemplate and seats
     const route = await prisma.route.findFirst({
       where: {
         id: routeId,
         status: RouteStatus.ACTIVE,
       },
-      select: {
-        id: true,
-        totalSeats: true,
+      include: {
+        busTemplate: {
+          include: {
+            seats: {
+              where: { isAvailable: true },
+              orderBy: [
+                { floor: 'asc' },
+                { rowNumber: 'asc' },
+                { columnPosition: 'asc' },
+              ],
+            }
+          }
+        }
       },
     });
 
@@ -42,53 +52,62 @@ export class SeatService {
       throw new NotFoundError('Route', routeId);
     }
 
-    // Get all seat records for this route/date
+    if (!route.busTemplate) {
+      throw new Error('Bus template not found for this route');
+    }
+
+    const templateSeats = route.busTemplate.seats;
+
+    // Get all booking seat records for this route/date
     const seatRecords = await this.seatRepo.findByRouteAndDate(routeId, date);
 
-    // Get availability summary
-    const summary = await this.seatRepo.getAvailabilitySummary(
-      routeId,
-      date,
-      route.totalSeats
-    );
-
-    // Generate all seat info
+    // Generate seat info from template
     const seatMap = new Map(seatRecords.map(s => [s.seatNumber, s]));
     const seats: SeatAvailabilityResponse['seats'] = [];
 
-    // Generate seat numbers (assuming standard bus layout)
-    for (let i = 1; i <= route.totalSeats; i++) {
-      const row = Math.ceil(i / 4);
-      const col = ((i - 1) % 4) + 1;
-      const seatNumber = `${String.fromCharCode(64 + col)}${row}`; // A1, B1, C1, D1, A2, B2...
+    // Map real seats from template with their booking status
+    for (const tSeat of templateSeats) {
+      const bookingRecord = seatMap.get(tSeat.seatNumber);
+      
+      const seatInfo = {
+        id: tSeat.id,
+        seatNumber: tSeat.seatNumber,
+        seatLabel: tSeat.seatLabel || tSeat.seatNumber,
+        row: tSeat.rowNumber,
+        column: tSeat.columnPosition,
+        floor: tSeat.floor,
+        seatType: tSeat.seatType,
+        position: tSeat.position,
+        basePrice: Number(route.price),
+        priceModifier: Number(tSeat.priceModifier),
+        finalPrice: Number(route.price) + Number(tSeat.priceModifier),
+        status: SeatStatus.AVAILABLE as any,
+        isSelectable: true,
+        metadata: tSeat.metadata,
+      };
 
-      const seatRecord = seatMap.get(seatNumber);
-
-      if (!seatRecord) {
-        seats.push({
-          seatNumber,
-          status: SeatStatus.AVAILABLE,
-        });
-      } else {
+      if (!tSeat.isAvailable) {
+        seatInfo.status = 'BLOCKED';
+        seatInfo.isSelectable = false;
+      } else if (bookingRecord) {
         const isHeldAndValid =
-          seatRecord.status === SeatStatus.HELD &&
-          seatRecord.lockedUntil > new Date();
+          bookingRecord.status === SeatStatus.HELD &&
+          bookingRecord.lockedUntil > new Date();
 
-        seats.push({
-          seatNumber,
-          status: isHeldAndValid ? SeatStatus.HELD : seatRecord.status,
-          lockedUntil: isHeldAndValid
-            ? seatRecord.lockedUntil.toISOString()
-            : undefined,
-        });
+        seatInfo.status = isHeldAndValid ? SeatStatus.HELD : bookingRecord.status;
+        seatInfo.isSelectable = false;
       }
+
+      seats.push(seatInfo);
     }
+    
+    const realAvailableCount = seats.filter(s => s.status === SeatStatus.AVAILABLE).length;
 
     return {
       routeId,
       departureDate,
-      totalSeats: route.totalSeats,
-      availableSeats: summary.availableSeats,
+      totalSeats: route.busTemplate.totalSeats, // Lấy từ BusTemplate
+      availableSeats: realAvailableCount,
       seats,
     };
   }
@@ -187,22 +206,27 @@ export class SeatService {
   ): Promise<{ valid: boolean; invalidSeats: string[] }> {
     const route = await prisma.route.findFirst({
       where: { id: routeId },
-      select: { totalSeats: true },
+      include: {
+        busTemplate: {
+          include: {
+            seats: {
+              where: { isAvailable: true }
+            }
+          }
+        }
+      },
     });
 
     if (!route) {
       throw new NotFoundError('Route', routeId);
     }
 
-    // Generate valid seat numbers
-    const validSeatNumbers = new Set<string>();
-    for (let i = 1; i <= route.totalSeats; i++) {
-      const row = Math.ceil(i / 4);
-      const col = ((i - 1) % 4) + 1;
-      const seatNumber = `${String.fromCharCode(64 + col)}${row}`;
-      validSeatNumbers.add(seatNumber);
+    if (!route.busTemplate) {
+      throw new Error('Bus template not found for this route');
     }
 
+    // Get valid seat numbers from the template
+    const validSeatNumbers = new Set(route.busTemplate.seats.map(s => s.seatNumber));
     const invalidSeats = seats.filter(s => !validSeatNumbers.has(s));
 
     return {

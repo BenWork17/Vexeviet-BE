@@ -1,4 +1,4 @@
-import { Route, BusType, RouteStatus, Prisma } from '@vexeviet/database';
+import { Route, BusType, RouteStatus, SeatStatus, Prisma, prisma } from '@vexeviet/database';
 import { RouteRepository } from '../repositories/route.repository';
 import {
   CreateRouteRequest,
@@ -7,11 +7,71 @@ import {
   PaginatedResponse,
 } from '../types';
 
+// Extended Route type with computed availableSeats
+type RouteWithAvailability = Route & {
+  availableSeats: number;
+  actualTotalSeats: number;
+};
+
 export class RouteService {
   private routeRepo: RouteRepository;
 
   constructor() {
     this.routeRepo = new RouteRepository();
+  }
+
+  /**
+   * Get actual total seats from BusTemplate
+   */
+  private async getActualTotalSeats(busTemplateId: string | null): Promise<number> {
+    if (!busTemplateId) {
+      return 0;
+    }
+
+    // Try to get totalSeats from BusTemplate table first as a cache
+    const template = await prisma.busTemplate.findUnique({
+      where: { id: busTemplateId },
+      select: { totalSeats: true }
+    });
+
+    if (template) {
+      return template.totalSeats;
+    }
+
+    // Fallback: count seats in Seat table
+    const seatCount = await prisma.seat.count({
+      where: {
+        busTemplateId,
+        isAvailable: true,
+      },
+    });
+
+    return seatCount;
+  }
+
+  /**
+   * Calculate available seats for a single route
+   */
+  private async calculateAvailableSeats(
+    routeId: string,
+    departureDate: Date,
+    totalSeats: number
+  ): Promise<number> {
+    const occupiedSeatsCount = await prisma.bookingSeat.count({
+      where: {
+        routeId,
+        departureDate,
+        OR: [
+          { status: SeatStatus.BOOKED },
+          {
+            status: SeatStatus.HELD,
+            lockedUntil: { gt: new Date() },
+          },
+        ],
+      },
+    });
+
+    return totalSeats - occupiedSeatsCount;
   }
 
   async create(operatorId: string, data: CreateRouteRequest): Promise<Route> {
@@ -28,8 +88,7 @@ export class RouteService {
       duration: data.duration,
       busType: data.busType || BusType.STANDARD,
       licensePlate: data.licensePlate,
-      totalSeats: data.totalSeats || 45,
-      availableSeats: data.totalSeats || 45,
+      // totalSeats and availableSeats removed
       price: data.price,
       amenities: data.amenities ? (JSON.parse(JSON.stringify(data.amenities)) as Prisma.InputJsonValue) : undefined,
       pickupPoints: data.pickupPoints ? (JSON.parse(JSON.stringify(data.pickupPoints)) as Prisma.InputJsonValue) : undefined,
@@ -42,8 +101,26 @@ export class RouteService {
     return this.routeRepo.create(routeData);
   }
 
-  async findById(id: string): Promise<Route | null> {
-    return this.routeRepo.findByIdWithOperator(id);
+  async findById(id: string): Promise<RouteWithAvailability | null> {
+    const route = await this.routeRepo.findByIdWithOperator(id);
+    
+    if (!route) {
+      return null;
+    }
+
+    // Get actual total seats from BusTemplate
+    const actualTotalSeats = await this.getActualTotalSeats(route.busTemplateId);
+
+    // Calculate available seats based on departure date (use route's departure time date)
+    const departureDate = new Date(route.departureTime.toISOString().split('T')[0]);
+    const availableSeats = await this.calculateAvailableSeats(route.id, departureDate, actualTotalSeats);
+
+    return {
+      ...route,
+      totalSeats: actualTotalSeats,
+      actualTotalSeats,
+      availableSeats,
+    } as any;
   }
 
   async findMany(query: RouteQuery): Promise<PaginatedResponse<Route>> {
@@ -93,8 +170,7 @@ export class RouteService {
     if (data.duration !== undefined) updateData.duration = data.duration;
     if (data.busType !== undefined) updateData.busType = data.busType;
     if (data.licensePlate !== undefined) updateData.licensePlate = data.licensePlate;
-    if (data.totalSeats !== undefined) updateData.totalSeats = data.totalSeats;
-    if (data.availableSeats !== undefined) updateData.availableSeats = data.availableSeats;
+    // totalSeats and availableSeats removed from update
     if (data.price !== undefined) updateData.price = data.price;
     if (data.status !== undefined) updateData.status = data.status;
     if (data.amenities !== undefined) updateData.amenities = JSON.parse(JSON.stringify(data.amenities)) as Prisma.InputJsonValue;

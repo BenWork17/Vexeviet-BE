@@ -8,12 +8,22 @@ export class SeatRepository {
     routeId: string,
     departureDate: Date
   ): Promise<BookingSeat[]> {
-    return prisma.bookingSeat.findMany({
+    // Normalize date to start of day (UTC) for consistent comparison
+    const normalizedDate = new Date(departureDate);
+    normalizedDate.setUTCHours(0, 0, 0, 0);
+    
+    console.log('[DEBUG] findByRouteAndDate:', { routeId, departureDate, normalizedDate });
+    
+    const results = await prisma.bookingSeat.findMany({
       where: {
         routeId,
-        departureDate,
+        departureDate: normalizedDate,
       },
     });
+    
+    console.log('[DEBUG] Found booking seats:', results.length, results.map(r => ({ seatNumber: r.seatNumber, status: r.status })));
+    
+    return results;
   }
 
   /**
@@ -74,10 +84,16 @@ export class SeatRepository {
     routeId: string,
     departureDate: Date,
     seatNumbers: string[],
-    bookingId: string,
+    holdId: string,
     ttlSeconds: number = 900
   ): Promise<BookingSeat[]> {
     const lockedUntil = new Date(Date.now() + ttlSeconds * 1000);
+    
+    // Normalize date to start of day (UTC) for consistent comparison
+    const normalizedDate = new Date(departureDate);
+    normalizedDate.setUTCHours(0, 0, 0, 0);
+    
+    console.log('[DEBUG] holdSeats:', { routeId, departureDate, normalizedDate, seatNumbers, holdId });
 
     // Use raw query for pessimistic locking
     return prisma.$transaction(async (tx) => {
@@ -85,17 +101,19 @@ export class SeatRepository {
       const existingSeats = await tx.bookingSeat.findMany({
         where: {
           routeId,
-          departureDate,
+          departureDate: normalizedDate,
           seatNumber: { in: seatNumbers },
         },
       });
+      
+      console.log('[DEBUG] Existing seats in holdSeats:', existingSeats.length);
 
-      // Check for conflicts (already booked or held by another booking)
+      // Check for conflicts (already booked or held by another holdId/booking)
       const conflicts = existingSeats.filter(
         seat =>
           seat.status === SeatStatus.BOOKED ||
           (seat.status === SeatStatus.HELD &&
-            seat.bookingId !== bookingId &&
+            seat.holdId !== holdId &&
             seat.lockedUntil > new Date())
       );
 
@@ -115,7 +133,8 @@ export class SeatRepository {
           const updated = await tx.bookingSeat.update({
             where: { id: existingSeat.id },
             data: {
-              bookingId,
+              holdId,
+              bookingId: null, // Clear bookingId when re-holding
               status: SeatStatus.HELD,
               lockedAt: new Date(),
               lockedUntil,
@@ -123,18 +142,19 @@ export class SeatRepository {
           });
           results.push(updated);
         } else {
-          // Create new seat record
+          // Create new seat record with normalized date
           const created = await tx.bookingSeat.create({
             data: {
-              bookingId,
+              holdId,
               routeId,
-              departureDate,
+              departureDate: normalizedDate,
               seatNumber,
               status: SeatStatus.HELD,
               lockedAt: new Date(),
               lockedUntil,
             },
           });
+          console.log('[DEBUG] Created new booking seat:', created);
           results.push(created);
         }
       }
@@ -145,14 +165,16 @@ export class SeatRepository {
 
   /**
    * Confirm seats (change status from HELD to BOOKED)
+   * Links the held seats to the actual booking
    */
-  async confirmSeats(bookingId: string): Promise<number> {
+  async confirmSeats(holdId: string, bookingId: string): Promise<number> {
     const result = await prisma.bookingSeat.updateMany({
       where: {
-        bookingId,
+        holdId,
         status: SeatStatus.HELD,
       },
       data: {
+        bookingId,
         status: SeatStatus.BOOKED,
       },
     });
@@ -160,9 +182,22 @@ export class SeatRepository {
   }
 
   /**
-   * Release seats (delete or mark as available)
+   * Release seats by holdId (for held seats not yet booked)
    */
-  async releaseSeats(bookingId: string): Promise<number> {
+  async releaseSeats(holdId: string): Promise<number> {
+    const result = await prisma.bookingSeat.deleteMany({
+      where: {
+        holdId,
+        status: SeatStatus.HELD,
+      },
+    });
+    return result.count;
+  }
+
+  /**
+   * Release seats by bookingId (for booked seats - when cancelling booking)
+   */
+  async releaseSeatsByBookingId(bookingId: string): Promise<number> {
     const result = await prisma.bookingSeat.deleteMany({
       where: {
         bookingId,
