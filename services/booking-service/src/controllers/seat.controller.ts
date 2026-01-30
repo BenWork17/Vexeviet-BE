@@ -50,18 +50,10 @@ export class SeatController {
     try {
       const { routeId, departureDate, seats } = req.body;
 
-      if (!routeId || !departureDate || !seats || !Array.isArray(seats)) {
-        res.status(400).json({
-          success: false,
-          error: 'routeId, departureDate, and seats array are required',
-        });
-        return;
-      }
-
       const result = await this.seatService.checkSeatsAvailable(
-        routeId,
-        departureDate,
-        seats
+        routeId || '',
+        departureDate || new Date().toISOString(),
+        Array.isArray(seats) ? seats : []
       );
 
       res.status(200).json({
@@ -86,18 +78,10 @@ export class SeatController {
 
       const { routeId, departureDate, seats, ttlSeconds } = req.body;
 
-      if (!routeId || !departureDate || !seats || !Array.isArray(seats)) {
-        res.status(400).json({
-          success: false,
-          error: 'routeId, departureDate, and seats array are required',
-        });
-        return;
-      }
-
       const request: SeatHoldRequest = {
-        routeId,
-        departureDate,
-        seats,
+        routeId: routeId || '',
+        departureDate: departureDate || new Date().toISOString(),
+        seats: Array.isArray(seats) ? seats : [],
         userId: req.user.userId,
         ttlSeconds,
       };

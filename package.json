@@ -23,7 +23,13 @@
     "prisma:generate": "turbo run prisma:generate",
     "prisma:migrate": "turbo run prisma:migrate",
     "db:seed": "dotenv -e .env -- ts-node packages/database/prisma/seed.ts",
-    "db:seed-routes": "dotenv -e .env -- ts-node packages/database/prisma/seed-full-routes.ts"
+    "db:seed-routes": "dotenv -e .env -- ts-node packages/database/prisma/seed-full-routes.ts",
+    "test:perf": "k6 run tests/performance/k6/run-all.js",
+    "test:perf:health": "k6 run tests/performance/k6/scenarios/health-check.js",
+    "test:perf:auth": "k6 run tests/performance/k6/scenarios/auth-flow.js",
+    "test:perf:search": "k6 run tests/performance/k6/scenarios/search-routes.js",
+    "test:perf:booking": "k6 run tests/performance/k6/scenarios/booking-flow.js",
+    "test:integration": "newman run tests/integration/VeXeViet-API.postman_collection.json -e tests/integration/VeXeViet-API.postman_environment.json"
   },
   "devDependencies": {
     "@types/node": "^25.0.9",

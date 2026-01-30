@@ -46,7 +46,8 @@ export class SearchController {
 
       res.status(200).json({
         success: true,
-        routes: result.data,
+        data: result.data,
+        routes: result.data, // Keep for FE compatibility
         total: result.pagination.total,
         page: result.pagination.page,
         pageSize: result.pagination.limit,
@@ -81,9 +82,10 @@ export class SearchController {
 
   getSuggestions = async (req: Request, res: Response): Promise<void> => {
     try {
-      const { query, field } = req.query;
+      const { query, q, field } = req.query;
+      const searchQuery = (query || q) as string;
 
-      if (!query || typeof query !== 'string') {
+      if (!searchQuery || typeof searchQuery !== 'string') {
         res.status(400).json({
           success: false,
           error: 'Query parameter is required',
@@ -92,7 +94,7 @@ export class SearchController {
       }
 
       const fieldType = field === 'destination' ? 'destination' : 'origin';
-      const suggestions = await searchService.getSuggestions(query, fieldType);
+      const suggestions = await searchService.getSuggestions(searchQuery, fieldType);
 
       res.status(200).json({
         success: true,

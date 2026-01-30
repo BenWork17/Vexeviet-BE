@@ -1,3 +1,4 @@
+import * as crypto from 'crypto';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import { UserRole } from '@prisma/client';
@@ -19,15 +20,16 @@ export class AuthService {
   }
 
   async register(data: RegisterRequest): Promise<AuthResponse> {
-    const identifier = data.method === 'email' ? data.email : data.phone;
+    const email = data.email?.toLowerCase();
+    const identifier = data.method === 'email' ? email : data.phone;
 
     if (!identifier) {
       throw new Error('Email or phone is required');
     }
 
     // Check if user already exists
-    if (data.method === 'email' && data.email) {
-      const existingUser = await this.userRepo.findByEmail(data.email);
+    if (data.method === 'email' && email) {
+      const existingUser = await this.userRepo.findByEmail(email);
       if (existingUser) {
         throw new Error('Email already registered');
       }
@@ -45,7 +47,7 @@ export class AuthService {
 
     // Create user
     const user = await this.userRepo.create({
-      email: data.email || `user_${Date.now()}@temp.vexeviet.com`, // Temporary email for phone registration
+      email: email || `user_${Date.now()}@temp.vexeviet.com`, // Temporary email for phone registration
       password: hashedPassword,
       firstName: data.firstName,
       lastName: data.lastName,
@@ -53,7 +55,7 @@ export class AuthService {
       role: UserRole.CUSTOMER,
       registrationMethod: data.method,
       termsAcceptedAt: data.agreeToTerms ? new Date() : undefined,
-      status: 'PENDING_VERIFICATION',
+      status: 'ACTIVE',
     });
 
     // Generate tokens
@@ -70,8 +72,9 @@ export class AuthService {
   }
 
   async login(data: LoginRequest): Promise<AuthResponse> {
+    const email = data.email.toLowerCase();
     // Find user by email
-    const user = await this.userRepo.findByEmail(data.email);
+    const user = await this.userRepo.findByEmail(email);
     if (!user) {
       throw new Error('Invalid credentials');
     }
@@ -126,6 +129,7 @@ export class AuthService {
   }
 
   async logout(token: string): Promise<void> {
+    if (!token) return;
     // Delete refresh token from database
     await this.refreshTokenRepo.deleteByToken(token);
   }
@@ -144,6 +148,7 @@ export class AuthService {
       userId,
       email,
       role,
+      jti: crypto.randomUUID(), // Add unique ID using built-in crypto module
     };
 
     // Generate access token (short-lived)

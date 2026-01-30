@@ -52,6 +52,7 @@ export class AuthController {
   login = async (req: Request, res: Response): Promise<void> => {
     try {
       const data = req.body as LoginRequest;
+      console.log(`[DEBUG] Login attempt for email: ${data.email}`);
       const result = await this.authService.login(data);
       res.status(200).json({
         success: true,

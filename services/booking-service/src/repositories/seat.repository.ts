@@ -8,22 +8,22 @@ export class SeatRepository {
     routeId: string,
     departureDate: Date
   ): Promise<BookingSeat[]> {
+    // Validate UUID format before querying Prisma to avoid P2023 error (400 Bad Request)
+    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    if (!uuidRegex.test(routeId)) {
+      return [];
+    }
+
     // Normalize date to start of day (UTC) for consistent comparison
     const normalizedDate = new Date(departureDate);
     normalizedDate.setUTCHours(0, 0, 0, 0);
     
-    console.log('[DEBUG] findByRouteAndDate:', { routeId, departureDate, normalizedDate });
-    
-    const results = await prisma.bookingSeat.findMany({
+    return prisma.bookingSeat.findMany({
       where: {
         routeId,
         departureDate: normalizedDate,
       },
     });
-    
-    console.log('[DEBUG] Found booking seats:', results.length, results.map(r => ({ seatNumber: r.seatNumber, status: r.status })));
-    
-    return results;
   }
 
   /**
@@ -60,7 +60,8 @@ export class SeatRepository {
           { status: SeatStatus.BOOKED },
           {
             status: SeatStatus.HELD,
-            lockedUntil: { gt: new Date() }, // Still held
+            lockedUntil: { gt: new Date() },
+            bookingId: { not: null }, // Only unavailable if actually linked to a booking
           },
         ],
       },
@@ -87,14 +88,18 @@ export class SeatRepository {
     holdId: string,
     ttlSeconds: number = 900
   ): Promise<BookingSeat[]> {
+    // Validate UUID format before querying Prisma to avoid P2023 error (400 Bad Request)
+    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    if (!uuidRegex.test(routeId)) {
+      throw new Error(`Invalid Route ID format: ${routeId}`);
+    }
+
     const lockedUntil = new Date(Date.now() + ttlSeconds * 1000);
     
     // Normalize date to start of day (UTC) for consistent comparison
     const normalizedDate = new Date(departureDate);
     normalizedDate.setUTCHours(0, 0, 0, 0);
     
-    console.log('[DEBUG] holdSeats:', { routeId, departureDate, normalizedDate, seatNumbers, holdId });
-
     // Use raw query for pessimistic locking
     return prisma.$transaction(async (tx) => {
       // First, check and lock the rows
@@ -106,57 +111,55 @@ export class SeatRepository {
         },
       });
       
-      console.log('[DEBUG] Existing seats in holdSeats:', existingSeats.length);
-
       // Check for conflicts (already booked or held by another holdId/booking)
       const conflicts = existingSeats.filter(
         seat =>
           seat.status === SeatStatus.BOOKED ||
           (seat.status === SeatStatus.HELD &&
             seat.holdId !== holdId &&
+            seat.bookingId !== null && // If linked to a booking, it's a real conflict
             seat.lockedUntil > new Date())
       );
 
       if (conflicts.length > 0) {
-        throw new Error(
-          `Seats unavailable: ${conflicts.map(s => s.seatNumber).join(', ')}`
-        );
+        const unavailableSeats = conflicts.map(s => s.seatNumber);
+        const error = new Error(`Seats unavailable: ${unavailableSeats.join(', ')}`) as any;
+        error.statusCode = 409;
+        error.code = 'SEATS_UNAVAILABLE';
+        error.details = { unavailableSeats };
+        throw error;
       }
 
       // Upsert seats (create if not exists, update if exists)
       const results: BookingSeat[] = [];
       for (const seatNumber of seatNumbers) {
-        const existingSeat = existingSeats.find(s => s.seatNumber === seatNumber);
-
-        if (existingSeat) {
-          // Update existing seat
-          const updated = await tx.bookingSeat.update({
-            where: { id: existingSeat.id },
-            data: {
-              holdId,
-              bookingId: null, // Clear bookingId when re-holding
-              status: SeatStatus.HELD,
-              lockedAt: new Date(),
-              lockedUntil,
-            },
-          });
-          results.push(updated);
-        } else {
-          // Create new seat record with normalized date
-          const created = await tx.bookingSeat.create({
-            data: {
-              holdId,
+        // Use upsert to be safe against race conditions
+        const result = await tx.bookingSeat.upsert({
+          where: {
+            routeId_departureDate_seatNumber: {
               routeId,
               departureDate: normalizedDate,
               seatNumber,
-              status: SeatStatus.HELD,
-              lockedAt: new Date(),
-              lockedUntil,
             },
-          });
-          console.log('[DEBUG] Created new booking seat:', created);
-          results.push(created);
-        }
+          },
+          create: {
+            holdId,
+            routeId,
+            departureDate: normalizedDate,
+            seatNumber,
+            status: SeatStatus.HELD,
+            lockedAt: new Date(),
+            lockedUntil,
+          },
+          update: {
+            holdId,
+            bookingId: null, // Clear bookingId when re-holding
+            status: SeatStatus.HELD,
+            lockedAt: new Date(),
+            lockedUntil,
+          },
+        });
+        results.push(result);
       }
 
       return results;
@@ -175,6 +178,23 @@ export class SeatRepository {
       },
       data: {
         bookingId,
+        status: SeatStatus.BOOKED,
+      },
+    });
+    return result.count;
+  }
+
+  /**
+   * Confirm seats by booking ID (change status from HELD to BOOKED)
+   * Used when confirming payment for an existing booking
+   */
+  async confirmSeatsByBookingId(bookingId: string): Promise<number> {
+    const result = await prisma.bookingSeat.updateMany({
+      where: {
+        bookingId,
+        status: SeatStatus.HELD,
+      },
+      data: {
         status: SeatStatus.BOOKED,
       },
     });

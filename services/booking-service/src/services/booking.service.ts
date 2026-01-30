@@ -1,3 +1,4 @@
+import { v4 as uuidv4 } from 'uuid';
 import { customAlphabet } from 'nanoid';
 import { config } from '../config';
 import { BookingRepository } from '../repositories/booking.repository';
@@ -64,25 +65,34 @@ export class BookingService {
       throw new NotFoundError('Route', data.routeId);
     }
 
+    // Support both 'seats' and 'seatNumbers' from request
+    const selectedSeats = data.seats || (data as any).seatNumbers || [];
+    const seatCount = Array.isArray(selectedSeats) ? selectedSeats.length : 0;
+    const passengerCount = Array.isArray(data.passengers) ? data.passengers.length : 0;
+
     // 3. Validate passengers match seats
-    if (data.passengers.length !== data.seats.length) {
+    if (passengerCount > 0 && seatCount > 0 && passengerCount !== seatCount) {
       throw new ConflictError('Number of passengers must match number of seats');
     }
 
     // 4. Validate max seats per booking
-    if (data.seats.length > config.booking.maxSeatsPerBooking) {
+    if (seatCount > config.booking.maxSeatsPerBooking) {
       throw new ConflictError(
         `Maximum ${config.booking.maxSeatsPerBooking} seats allowed per booking`
       );
     }
 
-    const departureDate = new Date(data.departureDate);
+    if (seatCount === 0) {
+      throw new ConflictError('At least one seat must be selected');
+    }
+
+    const departureDate = new Date(data.departureDate || new Date());
 
     // 5. Check seat availability
     const availability = await this.seatRepo.checkAvailability(
       data.routeId,
       departureDate,
-      data.seats
+      selectedSeats
     );
 
     if (!availability.available) {
@@ -92,7 +102,7 @@ export class BookingService {
     // 6. Calculate price
     const priceBreakdown = this.calculatePrice(
       Number(route.price),
-      data.seats.length,
+      selectedSeats.length,
       data.addons
     );
 
@@ -105,13 +115,14 @@ export class BookingService {
     );
 
     // 9. Create booking with transaction
+    const holdId = uuidv4();
     const booking = await prisma.$transaction(async (_tx) => {
       // Hold seats first
       await this.seatRepo.holdSeats(
         data.routeId,
         departureDate,
-        data.seats,
-        'temp', // Will update with actual booking ID
+        selectedSeats,
+        holdId,
         config.booking.seatHoldTTL
       );
 
@@ -128,40 +139,39 @@ export class BookingService {
         paymentDeadline,
         pickupPointId: data.pickupPointId,
         dropoffPointId: data.dropoffPointId,
-        contactEmail: data.contactInfo.email,
-        contactPhone: data.contactInfo.phone,
+        contactEmail: data.contactInfo?.email || (data as any).contactEmail || '',
+        contactPhone: data.contactInfo?.phone || (data as any).contactPhone || '',
         promoCode: data.promoCode,
         idempotencyKey: data.idempotencyKey,
         notes: data.notes,
       };
 
-      const passengers = data.passengers.map((p, index) => ({
+      const passengers = (data.passengers || []).map((p: any, index: number) => ({
         firstName: p.firstName,
         lastName: p.lastName,
-        seatNumber: data.seats[index],
+        seatNumber: p.seatNumber || (Array.isArray(selectedSeats) ? selectedSeats[index] : ''),
         idNumber: p.idNumber,
         dateOfBirth: p.dateOfBirth ? new Date(p.dateOfBirth) : undefined,
       }));
 
-      const seats = data.seats.map(seatNumber => ({
+      const bookingSeats = (selectedSeats || []).map((seatNumber: string) => ({
         routeId: data.routeId,
         departureDate,
         seatNumber,
         status: SeatStatus.HELD,
         lockedAt: new Date(),
         lockedUntil: paymentDeadline,
+        holdId,
       }));
 
       // Create booking with nested passengers and seats
-      return this.bookingRepo.create(bookingData, passengers, seats);
+      return this.bookingRepo.create(bookingData, passengers, bookingSeats);
     });
 
-    // 10. Update seat records with actual booking ID
+    // 10. Update seat records with actual booking ID using holdId
     await prisma.bookingSeat.updateMany({
       where: {
-        routeId: data.routeId,
-        departureDate,
-        seatNumber: { in: data.seats },
+        holdId: holdId,
       },
       data: {
         bookingId: booking.id,
@@ -169,7 +179,7 @@ export class BookingService {
     });
 
     // 11. Return response
-    return this.formatCreateBookingResponse(booking, route, data, priceBreakdown);
+    return this.formatCreateBookingResponse(booking, route, data, priceBreakdown, selectedSeats);
   }
 
   /**
@@ -326,7 +336,7 @@ export class BookingService {
     );
 
     // Confirm seats
-    await this.seatRepo.confirmSeats(bookingId);
+    await this.seatRepo.confirmSeatsByBookingId(bookingId);
 
     return this.formatBookingDetailResponse(updatedBooking);
   }
@@ -442,7 +452,8 @@ export class BookingService {
     booking: any,
     route: Route & { operator: { id: string; firstName: string; lastName: string } },
     request: CreateBookingRequest,
-    priceBreakdown: PriceBreakdown
+    priceBreakdown: PriceBreakdown,
+    selectedSeats?: string[]
   ): CreateBookingResponse {
     return {
       bookingId: booking.id,
@@ -459,10 +470,12 @@ export class BookingService {
         arrivalTime: route.arrivalTime.toISOString(),
         duration: route.duration,
         busType: route.busType,
-        operatorName: `${route.operator.firstName} ${route.operator.lastName}`,
+        operatorName: route.operator 
+          ? `${route.operator.firstName} ${route.operator.lastName}` 
+          : 'Unknown Operator',
       },
       passengers: request.passengers,
-      seats: request.seats,
+      seats: selectedSeats || request.seats,
       totalPrice: {
         amount: priceBreakdown.total,
         currency: 'VND',

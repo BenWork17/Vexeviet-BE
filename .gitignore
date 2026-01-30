@@ -5,6 +5,8 @@ node_modules/
 
 # Testing
 coverage/
+tests/performance/k6/reports/*.json
+tests/performance/k6/reports/*.txt
 
 # Build output
 dist/

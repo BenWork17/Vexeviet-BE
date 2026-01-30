@@ -168,8 +168,6 @@ async function main() {
             duration: routeConfig.duration,
             busType: routeConfig.busType as BusType,
             busTemplateId: template?.id,
-            totalSeats: template?.totalSeats || 45,
-            availableSeats: template?.totalSeats || 45,
             price: routeConfig.price,
             amenities: ['WiFi', 'AC', 'Water', 'USB Charging'],
             pickupPoints: [

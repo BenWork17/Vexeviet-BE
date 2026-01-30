@@ -20,6 +20,13 @@ const seatController = new SeatController();
 // =====================================================
 
 /**
+ * @route   GET /api/v1/bookings/code/:code
+ * @desc    Get booking by booking code
+ * @access  Private/Public (optional auth - returns limited info without auth)
+ */
+router.get('/bookings/code/:code', optionalAuth, bookingController.getByCode);
+
+/**
  * @route   POST /api/v1/bookings
  * @desc    Create a new booking
  * @access  Private (requires auth)
@@ -39,18 +46,15 @@ router.post(
 router.get('/bookings/my', authMiddleware, bookingController.getMyBookings);
 
 /**
- * @route   GET /api/v1/bookings/code/:code
- * @desc    Get booking by booking code
- * @access  Private/Public (optional auth - returns limited info without auth)
- */
-router.get('/bookings/code/:code', optionalAuth, bookingController.getByCode);
-
-/**
  * @route   GET /api/v1/bookings/:id
  * @desc    Get booking by ID
  * @access  Private (requires auth)
  */
-router.get('/bookings/:id', authMiddleware, bookingController.getById);
+router.get(
+  '/bookings/:id([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})',
+  authMiddleware,
+  bookingController.getById
+);
 
 /**
  * @route   POST /api/v1/bookings/:id/cancel
@@ -58,7 +62,7 @@ router.get('/bookings/:id', authMiddleware, bookingController.getById);
  * @access  Private (requires auth)
  */
 router.post(
-  '/bookings/:id/cancel',
+  '/bookings/:id([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/cancel',
   authMiddleware,
   validateBody(cancelBookingSchema),
   bookingController.cancel
@@ -69,7 +73,10 @@ router.post(
  * @desc    Confirm a booking (internal API - called after payment)
  * @access  Internal (requires API key - TODO: implement)
  */
-router.post('/bookings/:id/confirm', bookingController.confirm);
+router.post(
+  '/bookings/:id([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/confirm',
+  bookingController.confirm
+);
 
 // =====================================================
 // SEAT ROUTES

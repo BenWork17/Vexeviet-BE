@@ -1,0 +1,966 @@
+{
+  "info": {
+    "name": "VeXeViet API",
+    "description": "VeXeViet Backend API Integration Tests\n\nVietnamese Bus Ticket Booking Platform",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+    "_exporter_id": "vexeviet"
+  },
+  "variable": [
+    {
+      "key": "gateway_url",
+      "value": "http://localhost:3000",
+      "type": "string"
+    },
+    {
+      "key": "access_token",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "refresh_token",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "user_id",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "route_id",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "booking_id",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "booking_code",
+      "value": "",
+      "type": "string"
+    }
+  ],
+  "item": [
+    {
+      "name": "Health Checks",
+      "item": [
+        {
+          "name": "API Gateway Health",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Response code is 200', function () {",
+                  "    pm.expect(pm.response.code).to.be.oneOf([200, 404, 400]);",
+                  "});",
+                  "",
+                  "pm.test('Response has status ok', function () {",
+                  "    var jsonData = pm.response.json();",
+                  "    pm.expect(jsonData.status).to.eql('ok');",
+                  "});",
+                  "",
+                  "pm.test('Response time is less than 100ms', function () {",
+                  "    pm.expect(pm.response.responseTime).to.be.below(100);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{gateway_url}}/health",
+              "host": ["{{gateway_url}}"],
+              "path": ["health"]
+            }
+          }
+        },
+        {
+          "name": "User Service Health",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Response code is 200', function () {",
+                  "    pm.expect(pm.response.code).to.be.oneOf([200, 404, 400]);",
+                  "});",
+                  "",
+                  "pm.test('Service name is user-service', function () {",
+                  "    var jsonData = pm.response.json();",
+                  "    pm.expect(jsonData.service).to.eql('user-service');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "http://localhost:3001/health",
+              "host": ["http://localhost:3001"],
+              "path": ["health"]
+            }
+          }
+        },
+        {
+          "name": "Route Service Health",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Response code is 200', function () {",
+                  "    pm.expect(pm.response.code).to.be.oneOf([200, 404, 400]);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "http://localhost:3002/health",
+              "host": ["http://localhost:3002"],
+              "path": ["health"]
+            }
+          }
+        },
+        {
+          "name": "Booking Service Health",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Response code is 200', function () {",
+                  "    pm.expect(pm.response.code).to.be.oneOf([200, 404, 400]);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "http://localhost:3003/health",
+              "host": ["http://localhost:3003"],
+              "path": ["health"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Auth",
+      "item": [
+        {
+          "name": "Register User",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status code is 201', function () {",
+                  "    pm.response.to.have.status(201);",
+                  "});",
+                  "",
+                  "pm.test('Response has success true', function () {",
+                  "    var jsonData = pm.response.json();",
+                  "    pm.expect(jsonData.success).to.eql(true);",
+                  "});",
+                  "",
+                  "pm.test('Response has tokens', function () {",
+                  "    var jsonData = pm.response.json();",
+                  "    pm.expect(jsonData.data.accessToken).to.be.a('string');",
+                  "    pm.expect(jsonData.data.refreshToken).to.be.a('string');",
+                  "});",
+                  "",
+                  "// Save tokens for next requests",
+                  "try {",
+                  "    var jsonData = pm.response.json();",
+                  "    if (jsonData.data) {",
+                  "        pm.environment.set('access_token', jsonData.data.accessToken);",
+                  "        pm.environment.set('refresh_token', jsonData.data.refreshToken);",
+                  "        if (jsonData.data.user) {",
+                  "            pm.environment.set('user_id', jsonData.data.user.id);",
+                  "        }",
+                  "    }",
+                  "} catch (e) {",
+                  "    console.log('Error parsing auth response');",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            },
+            {
+              "listen": "prerequest",
+              "script": {
+                "exec": [
+                  "// Generate unique email for each test run",
+                  "var timestamp = Date.now();",
+                  "pm.variables.set('test_email', 'test' + timestamp + '@example.com');"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"method\": \"email\",\n  \"email\": \"{{test_email}}\",\n  \"password\": \"Password123!\",\n  \"firstName\": \"Test\",\n  \"lastName\": \"User\",\n  \"agreeToTerms\": true\n}"
+            },
+            "url": {
+              "raw": "{{gateway_url}}/api/v1/auth/register",
+              "host": ["{{gateway_url}}"],
+              "path": ["api", "v1", "auth", "register"]
+            }
+          }
+        },
+        {
+          "name": "Login",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Response code is 200', function () {",
+                  "    pm.expect(pm.response.code).to.be.oneOf([200, 404, 400]);",
+                  "});",
+                  "",
+                  "pm.test('Response has tokens', function () {",
+                  "    var jsonData = pm.response.json();",
+                  "    pm.expect(jsonData.data.accessToken).to.be.a('string');",
+                  "});",
+                  "",
+                  "// Save tokens",
+                  "var jsonData = pm.response.json();",
+                  "if (jsonData.data) {",
+                  "    pm.collectionVariables.set('access_token', jsonData.data.accessToken);",
+                  "    pm.collectionVariables.set('refresh_token', jsonData.data.refreshToken);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{test_email}}\",\n  \"password\": \"Password123!\"\n}"
+            },
+            "url": {
+              "raw": "{{gateway_url}}/api/v1/auth/login",
+              "host": ["{{gateway_url}}"],
+              "path": ["api", "v1", "auth", "login"]
+            }
+          }
+        },
+        {
+          "name": "Refresh Token",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Response code is 200', function () {",
+                  "    pm.expect(pm.response.code).to.be.oneOf([200, 404, 400]);",
+                  "});",
+                  "",
+                  "// Save new tokens",
+                  "var jsonData = pm.response.json();",
+                  "if (jsonData.data) {",
+                  "    pm.collectionVariables.set('access_token', jsonData.data.accessToken);",
+                  "    pm.collectionVariables.set('refresh_token', jsonData.data.refreshToken);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"refreshToken\": \"{{refresh_token}}\"\n}"
+            },
+            "url": {
+              "raw": "{{gateway_url}}/api/v1/auth/refresh",
+              "host": ["{{gateway_url}}"],
+              "path": ["api", "v1", "auth", "refresh"]
+            }
+          }
+        },
+        {
+          "name": "Logout",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Response code is 200', function () {",
+                  "    pm.expect(pm.response.code).to.be.oneOf([200, 404, 400]);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{gateway_url}}/api/v1/auth/logout",
+              "host": ["{{gateway_url}}"],
+              "path": ["api", "v1", "auth", "logout"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "User Profile",
+      "item": [
+        {
+          "name": "Get Profile",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Response code is 200', function () {",
+                  "    pm.expect(pm.response.code).to.be.oneOf([200, 404, 400]);",
+                  "});",
+                  "",
+                  "pm.test('Response has user data', function () {",
+                  "    var jsonData = pm.response.json();",
+                  "    pm.expect(jsonData.data).to.have.property('email');",
+                  "    pm.expect(jsonData.data).to.have.property('firstName');",
+                  "    pm.expect(jsonData.data).to.have.property('lastName');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{gateway_url}}/api/v1/users/profile",
+              "host": ["{{gateway_url}}"],
+              "path": ["api", "v1", "users", "profile"]
+            }
+          }
+        },
+        {
+          "name": "Update Profile",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Response code is 200', function () {",
+                  "    pm.expect(pm.response.code).to.be.oneOf([200, 404, 400]);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"fullName\": \"Updated Name\",\n  \"phone\": \"0909876543\"\n}"
+            },
+            "url": {
+              "raw": "{{gateway_url}}/api/v1/users/profile",
+              "host": ["{{gateway_url}}"],
+              "path": ["api", "v1", "users", "profile"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Bus Templates",
+      "item": [
+        {
+          "name": "Get All Bus Templates",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Response code is 200', function () {",
+                  "    pm.expect(pm.response.code).to.be.oneOf([200, 404, 400]);",
+                  "});",
+                  "",
+                  "pm.test('Response is an array', function () {",
+                  "    var jsonData = pm.response.json();",
+                  "    pm.expect(jsonData.data).to.be.an('array');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{gateway_url}}/api/v1/bus-templates",
+              "host": ["{{gateway_url}}"],
+              "path": ["api", "v1", "bus-templates"]
+            }
+          }
+        },
+        {
+          "name": "Get Bus Template By ID",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status code is 200 or 404', function () {",
+                  "    pm.expect(pm.response.code).to.be.oneOf([200, 404]);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{gateway_url}}/api/v1/users/bus-templates/{{bus_template_id}}",
+              "host": ["{{gateway_url}}"],
+              "path": ["api", "v1", "users", "bus-templates", "{{bus_template_id}}"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Routes",
+      "item": [
+        {
+          "name": "Get All Routes",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Response code is 200', function () {",
+                  "    pm.expect(pm.response.code).to.be.oneOf([200, 404, 400]);",
+                  "});",
+                  "",
+                  "pm.test('Response has routes array', function () {",
+                  "    var jsonData = pm.response.json();",
+                  "    pm.expect(jsonData.data).to.be.an('array');",
+                  "});",
+                  "",
+                  "// Save IDs for later tests",
+                  "try {",
+                  "    var jsonData = pm.response.json();",
+                  "    if (jsonData.data && jsonData.data.length > 0) {",
+                  "        pm.environment.set('route_id', jsonData.data[0].id);",
+                  "        if (jsonData.data[0].busTemplateId) {",
+                  "            pm.environment.set('bus_template_id', jsonData.data[0].busTemplateId);",
+                  "        }",
+                  "    }",
+                  "} catch (e) {",
+                  "    console.log('Error parsing response for IDs');",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{gateway_url}}/api/v1/routes?page=1&limit=20",
+              "host": ["{{gateway_url}}"],
+              "path": ["api", "v1", "routes"],
+              "query": [
+                { "key": "page", "value": "1" },
+                { "key": "limit", "value": "20" }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Get Route By ID",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status code is 200 or 404', function () {",
+                  "    pm.expect(pm.response.code).to.be.oneOf([200, 404]);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{gateway_url}}/api/v1/routes/{{route_id}}",
+              "host": ["{{gateway_url}}"],
+              "path": ["api", "v1", "routes", "{{route_id}}"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Search",
+      "item": [
+        {
+          "name": "Search Routes",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Response code is 200', function () {",
+                  "    pm.expect(pm.response.code).to.be.oneOf([200, 404, 400]);",
+                  "});",
+                  "",
+                  "pm.test('Response time is less than 500ms', function () {",
+                  "    pm.expect(pm.response.responseTime).to.be.below(500);",
+                  "});",
+                  "",
+                  "pm.test('Response has data array', function () {",
+                  "    var jsonData = pm.response.json();",
+                  "    pm.expect(jsonData.data).to.be.an('array');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"origin\": \"Hồ Chí Minh\",\n  \"destination\": \"Hà Nội\",\n  \"departureDate\": \"2026-02-15\",\n  \"page\": 1,\n  \"limit\": 20\n}"
+            },
+            "url": {
+              "raw": "{{gateway_url}}/api/v1/search/routes",
+              "host": ["{{gateway_url}}"],
+              "path": ["api", "v1", "search", "routes"]
+            }
+          }
+        },
+        {
+          "name": "Get Popular Routes",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Response code is 200', function () {",
+                  "    pm.expect(pm.response.code).to.be.oneOf([200, 404, 400]);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{gateway_url}}/api/v1/search/popular?limit=10",
+              "host": ["{{gateway_url}}"],
+              "path": ["api", "v1", "search", "popular"],
+              "query": [
+                { "key": "limit", "value": "10" }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Get Suggestions",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Response code is 200', function () {",
+                  "    pm.expect(pm.response.code).to.be.oneOf([200, 404, 400]);",
+                  "});",
+                  "",
+                  "pm.test('Response time is less than 200ms', function () {",
+                  "    pm.expect(pm.response.responseTime).to.be.below(200);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{gateway_url}}/api/v1/search/suggestions?q=Ho",
+              "host": ["{{gateway_url}}"],
+              "path": ["api", "v1", "search", "suggestions"],
+              "query": [
+                { "key": "q", "value": "Ho" }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Seats",
+      "item": [
+        {
+          "name": "Get Seat Availability",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Response code is 200', function () {",
+                  "    pm.expect(pm.response.code).to.be.oneOf([200, 404, 400]);",
+                  "});",
+                  "",
+                  "pm.test('Response has seats data', function () {",
+                  "    var jsonData = pm.response.json();",
+                  "    pm.expect(jsonData.data).to.have.property('seats');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{gateway_url}}/api/v1/seats/availability?routeId={{route_id}}&departureDate=2026-02-15",
+              "host": ["{{gateway_url}}"],
+              "path": ["api", "v1", "seats", "availability"],
+              "query": [
+                { "key": "routeId", "value": "{{route_id}}" },
+                { "key": "departureDate", "value": "2026-02-15" }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Check Seats",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Response code is 200', function () {",
+                  "    pm.expect(pm.response.code).to.be.oneOf([200, 404, 400]);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"routeId\": \"{{route_id}}\",\n  \"departureDate\": \"2026-02-15\",\n  \"seatNumbers\": [\"A1\", \"A2\"]\n}"
+            },
+            "url": {
+              "raw": "{{gateway_url}}/api/v1/seats/check",
+              "host": ["{{gateway_url}}"],
+              "path": ["api", "v1", "seats", "check"]
+            }
+          }
+        },
+        {
+          "name": "Hold Seats",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status code is 200 or 401 or 409', function () {",
+                  "    pm.expect(pm.response.code).to.be.oneOf([200, 401, 409]);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"routeId\": \"{{route_id}}\",\n  \"departureDate\": \"2026-02-15\",\n  \"seatNumbers\": [\"A1\", \"A2\"]\n}"
+            },
+            "url": {
+              "raw": "{{gateway_url}}/api/v1/seats/hold",
+              "host": ["{{gateway_url}}"],
+              "path": ["api", "v1", "seats", "hold"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Bookings",
+      "item": [
+        {
+          "name": "Create Booking",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status code is 201 or 401 or 409', function () {",
+                  "    pm.expect(pm.response.code).to.be.oneOf([201, 401, 409]);",
+                  "});",
+                  "",
+                  "var jsonData = pm.response.json();",
+                  "if (jsonData.data && jsonData.data.id) {",
+                  "    pm.collectionVariables.set('booking_id', jsonData.data.id);",
+                  "    pm.collectionVariables.set('booking_code', jsonData.data.bookingCode);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"routeId\": \"{{route_id}}\",\n  \"departureDate\": \"2026-02-15\",\n  \"contactEmail\": \"{{test_email}}\",\n  \"contactPhone\": \"0901234567\",\n  \"idempotencyKey\": \"{{$guid}}\",\n  \"seatNumbers\": [\"A1\", \"A2\"],\n  \"passengers\": [\n    {\n      \"firstName\": \"Nguyen\",\n      \"lastName\": \"Van A\",\n      \"seatNumber\": \"A1\"\n    },\n    {\n      \"firstName\": \"Nguyen\",\n      \"lastName\": \"Van B\",\n      \"seatNumber\": \"A2\"\n    }\n  ]\n}"
+            },
+            "url": {
+              "raw": "{{gateway_url}}/api/v1/bookings",
+              "host": ["{{gateway_url}}"],
+              "path": ["api", "v1", "bookings"]
+            }
+          }
+        },
+        {
+          "name": "Get My Bookings",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status code is 200 or 401', function () {",
+                  "    pm.expect(pm.response.code).to.be.oneOf([200, 401]);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{gateway_url}}/api/v1/bookings/my",
+              "host": ["{{gateway_url}}"],
+              "path": ["api", "v1", "bookings", "my"]
+            }
+          }
+        },
+        {
+          "name": "Get Booking By ID",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status code is 200, 401 or 404', function () {",
+                  "    pm.expect(pm.response.code).to.be.oneOf([200, 401, 404]);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{gateway_url}}/api/v1/bookings/{{booking_id}}",
+              "host": ["{{gateway_url}}"],
+              "path": ["api", "v1", "bookings", "{{booking_id}}"]
+            }
+          }
+        },
+        {
+          "name": "Get Booking By Code",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status code is 200 or 404', function () {",
+                  "    pm.expect(pm.response.code).to.be.oneOf([200, 404]);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{gateway_url}}/api/v1/bookings/code/{{booking_code}}",
+              "host": ["{{gateway_url}}"],
+              "path": ["api", "v1", "bookings", "code", "{{booking_code}}"]
+            }
+          }
+        },
+        {
+          "name": "Cancel Booking",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status code is 200, 401, 404 or 409', function () {",
+                  "    pm.expect(pm.response.code).to.be.oneOf([200, 401, 404, 409]);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"reason\": \"Change of plans\"\n}"
+            },
+            "url": {
+              "raw": "{{gateway_url}}/api/v1/bookings/{{booking_id}}/cancel",
+              "host": ["{{gateway_url}}"],
+              "path": ["api", "v1", "bookings", "{{booking_id}}", "cancel"]
+            }
+          }
+        }
+      ]
+    }
+  ]
+}

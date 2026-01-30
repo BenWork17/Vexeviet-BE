@@ -7,8 +7,8 @@ export class BookingRepository {
   async create(
     data: Prisma.BookingCreateInput,
     passengers: Prisma.BookingPassengerCreateManyBookingInput[],
-    seats: Omit<Prisma.BookingSeatCreateManyBookingInput, 'bookingId'>[]
-  ): Promise<Booking & { passengers: { id: string; seatNumber: string }[]; seats: { seatNumber: string; status: SeatStatus }[] }> {
+    _seats?: Omit<Prisma.BookingSeatCreateManyBookingInput, 'bookingId'>[]
+  ): Promise<Booking & { passengers: { id: string; seatNumber: string }[] }> {
     return prisma.booking.create({
       data: {
         ...data,
@@ -17,26 +17,12 @@ export class BookingRepository {
             data: passengers,
           },
         },
-        seats: {
-          createMany: {
-            data: seats.map(seat => ({
-              ...seat,
-              routeId: data.route?.connect?.id as string,
-            })),
-          },
-        },
       },
       include: {
         passengers: {
           select: {
             id: true,
             seatNumber: true,
-          },
-        },
-        seats: {
-          select: {
-            seatNumber: true,
-            status: true,
           },
         },
       },

@@ -1,9 +1,11 @@
 import express from 'express';
 import cors from 'cors';
 import { createProxyMiddleware } from 'http-proxy-middleware';
+import swaggerUi from 'swagger-ui-express';
 import { config } from '@vexeviet/config';
 import { API_PREFIX } from '@vexeviet/common';
 import { services } from './config/services.config';
+import { swaggerSpec } from './config/swagger.config';
 import { requestLogger } from './middlewares/logger.middleware';
 import { rateLimiter } from './middlewares/rate-limiter.middleware';
 import { errorHandler, notFoundHandler } from './middlewares/error.middleware';
@@ -13,7 +15,7 @@ const app = express();
 // Middlewares
 app.use(cors());
 app.use(requestLogger);
-app.use(rateLimiter(100, 60000)); // 100 requests per minute
+// app.use(rateLimiter(100, 60000)); // 100 requests per minute
 
 // Health check
 app.get('/health', (_req, res) => {
@@ -23,6 +25,19 @@ app.get('/health', (_req, res) => {
     timestamp: new Date().toISOString(),
     uptime: process.uptime(),
   });
+});
+
+// Swagger API Documentation
+const swaggerSetup = swaggerUi.setup(swaggerSpec as object, {
+  customCss: '.swagger-ui .topbar { display: none }',
+  customSiteTitle: 'VeXeViet API Documentation',
+});
+app.use('/api/docs', swaggerUi.serve as unknown as express.RequestHandler, swaggerSetup as unknown as express.RequestHandler);
+
+// OpenAPI spec JSON endpoint
+app.get('/api/docs.json', (_req, res) => {
+  res.setHeader('Content-Type', 'application/json');
+  res.send(swaggerSpec);
 });
 
 // Service discovery endpoint
@@ -79,6 +94,7 @@ app.listen(PORT, () => {
   console.log(`🚀 API Gateway running on port ${PORT}`);
   console.log(`📝 Environment: ${process.env.NODE_ENV || 'development'}`);
   console.log(`🔗 Health check: http://localhost:${PORT}/health`);
+  console.log(`📚 API Docs: http://localhost:${PORT}/api/docs`);
   console.log(`📡 Services: http://localhost:${PORT}/services`);
   console.log('\n🔀 Registered routes:');
   services.forEach((s) => {

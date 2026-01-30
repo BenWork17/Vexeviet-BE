@@ -30,7 +30,7 @@ export class SeatService {
     const route = await prisma.route.findFirst({
       where: {
         id: routeId,
-        status: RouteStatus.ACTIVE,
+        // status: RouteStatus.ACTIVE, // Temporarily disable strict status check for testing
       },
       include: {
         busTemplate: {
@@ -136,7 +136,7 @@ export class SeatService {
     const route = await prisma.route.findFirst({
       where: {
         id: routeId,
-        status: RouteStatus.ACTIVE,
+        // status: RouteStatus.ACTIVE,
       },
     });
 

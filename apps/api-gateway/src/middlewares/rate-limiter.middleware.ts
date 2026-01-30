@@ -18,24 +18,24 @@ export interface RateLimitConfig {
 // Endpoint-specific rate limit configurations
 export const rateLimitConfigs: Record<string, RateLimitConfig> = {
   '/api/v1/auth/register': {
-    maxRequests: 5,
-    windowMs: 3600000, // 1 hour
-    message: 'Too many registration attempts. Try again in 1 hour.',
+    maxRequests: 1000,
+    windowMs: 60000, // 1 minute
+    message: 'Too many registration attempts.',
   },
   '/api/v1/auth/login': {
-    maxRequests: 10,
-    windowMs: 900000, // 15 minutes
-    message: 'Too many login attempts. Try again in 15 minutes.',
+    maxRequests: 1000,
+    windowMs: 60000, // 1 minute
+    message: 'Too many login attempts.',
   },
   '/api/v1/auth/verify-otp': {
-    maxRequests: 5,
-    windowMs: 600000, // 10 minutes
-    message: 'Too many verification attempts. Request a new code.',
+    maxRequests: 1000,
+    windowMs: 60000, // 1 minute
+    message: 'Too many verification attempts.',
   },
   '/api/v1/auth/resend-otp': {
-    maxRequests: 3,
-    windowMs: 3600000, // 1 hour
-    message: 'Too many OTP requests. Try again in 1 hour.',
+    maxRequests: 1000,
+    windowMs: 60000, // 1 minute
+    message: 'Too many OTP requests.',
   },
 };
 

@@ -40,6 +40,11 @@ export const services: ServiceConfig[] = [
     url: process.env.BOOKING_SERVICE_URL || 'http://localhost:3003',
     prefix: '/seats',
   },
+  {
+    name: 'user-service-bus-templates',
+    url: process.env.USER_SERVICE_URL || 'http://localhost:3001',
+    prefix: '/bus-templates',
+  },
 ];
 
 export const getServiceByPrefix = (prefix: string): ServiceConfig | undefined => {

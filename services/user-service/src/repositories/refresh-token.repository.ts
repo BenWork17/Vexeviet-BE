@@ -9,6 +9,7 @@ export class RefreshTokenRepository {
   }
 
   async findByToken(token: string): Promise<RefreshTokenWithUser | null> {
+    if (!token) return null;
     return prisma.refreshToken.findUnique({
       where: { token },
       include: { user: true },
@@ -16,6 +17,7 @@ export class RefreshTokenRepository {
   }
 
   async deleteByToken(token: string): Promise<RefreshToken | null> {
+    if (!token) return null;
     try {
       return await prisma.refreshToken.delete({
         where: { token },
