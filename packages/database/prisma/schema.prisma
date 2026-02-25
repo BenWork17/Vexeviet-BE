@@ -245,6 +245,43 @@ enum BookingStatus {
   EXPIRED
 }
 
+// =====================================================
+// PAYMENT MODELS (PI 2 - Iteration 2-1)
+// =====================================================
+
+enum PaymentMethod {
+  VNPAY
+  MOMO
+  ZALOPAY
+  BANK_TRANSFER
+  CASH
+}
+
+enum PaymentStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  FAILED
+  CANCELLED
+  EXPIRED
+  REFUNDED
+  PARTIALLY_REFUNDED
+}
+
+enum TransactionType {
+  PAYMENT
+  REFUND
+  CHARGEBACK
+}
+
+enum TransactionStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  FAILED
+  CANCELLED
+}
+
 enum SeatStatus {
   AVAILABLE
   HELD
@@ -303,6 +340,7 @@ model Booking {
   // Relations
   passengers BookingPassenger[]
   seats      BookingSeat[]
+  payments   Payment[]
 
   @@index([bookingCode])
   @@index([userId])
@@ -379,4 +417,83 @@ model BookingSeat {
   @@index([seatId])
   @@index([lockedUntil])
   @@map("booking_seats")
+}
+
+// =====================================================
+// PAYMENT & TRANSACTION MODELS (PI 2 - Iteration 2-1)
+// =====================================================
+
+model Payment {
+  id String @id @default(uuid())
+
+  // Booking relation
+  bookingId String
+  booking   Booking @relation(fields: [bookingId], references: [id])
+
+  // Payment details
+  amount  Decimal       @db.Decimal(10, 2)
+  method  PaymentMethod
+  status  PaymentStatus @default(PENDING)
+
+  // Transaction reference (unique per payment attempt)
+  transactionRef String @unique @db.VarChar(30)
+
+  // Payment URL (for redirect-based payments)
+  paymentUrl String? @db.VarChar(1000)
+
+  // Timestamps
+  paidAt    DateTime?
+  expiredAt DateTime?
+
+  // Provider response data
+  providerData Json?
+
+  // Metadata (orderInfo, locale, ipAddress, etc.)
+  metadata Json?
+
+  // Audit
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  transactions Transaction[]
+
+  @@index([bookingId])
+  @@index([status])
+  @@index([transactionRef])
+  @@index([createdAt])
+  @@map("payments")
+}
+
+model Transaction {
+  id String @id @default(uuid())
+
+  // Payment relation
+  paymentId String
+  payment   Payment @relation(fields: [paymentId], references: [id], onDelete: Cascade)
+
+  // Transaction details
+  type   TransactionType
+  amount Decimal           @db.Decimal(10, 2)
+  status TransactionStatus @default(PENDING)
+
+  // Provider transaction info
+  providerTxnId   String? @db.VarChar(100)
+  bankCode        String? @db.VarChar(20)
+  bankTranNo      String? @db.VarChar(50)
+  responseCode    String? @db.VarChar(10)
+  responseMessage String? @db.VarChar(500)
+
+  // Metadata (for refund reason, etc.)
+  metadata Json?
+
+  // Audit
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([paymentId])
+  @@index([type])
+  @@index([status])
+  @@index([providerTxnId])
+  @@map("transactions")
 }

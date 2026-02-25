@@ -10,8 +10,8 @@
   ],
   "scripts": {
     "dev": "turbo run dev",
-    "dev:all": "concurrently -n \"docker,user,route,booking,gateway\" -c \"blue,green,yellow,cyan,magenta\" \"pnpm docker:up\" \"pnpm --filter @vexeviet/user-service dev\" \"pnpm --filter @vexeviet/route-service dev\" \"pnpm --filter @vexeviet/booking-service dev\" \"pnpm --filter @vexeviet/api-gateway dev\"",
-    "dev:services": "concurrently -n \"user,route,booking,gateway\" -c \"green,yellow,cyan,magenta\" \"pnpm --filter @vexeviet/user-service dev\" \"pnpm --filter @vexeviet/route-service dev\" \"pnpm --filter @vexeviet/booking-service dev\" \"pnpm --filter @vexeviet/api-gateway dev\"",
+    "dev:all": "concurrently -n \"docker,user,route,booking,payment,gateway\" -c \"blue,green,yellow,cyan,red,magenta\" \"pnpm docker:up\" \"pnpm --filter @vexeviet/user-service dev\" \"pnpm --filter @vexeviet/route-service dev\" \"pnpm --filter @vexeviet/booking-service dev\" \"pnpm --filter @vexeviet/payment-service dev\" \"pnpm --filter @vexeviet/api-gateway dev\"",
+    "dev:services": "concurrently -n \"user,route,booking,payment,gateway\" -c \"green,yellow,cyan,red,magenta\" \"pnpm --filter @vexeviet/user-service dev\" \"pnpm --filter @vexeviet/route-service dev\" \"pnpm --filter @vexeviet/booking-service dev\" \"pnpm --filter @vexeviet/payment-service dev\" \"pnpm --filter @vexeviet/api-gateway dev\"",
     "build": "turbo run build",
     "test": "turbo run test",
     "lint": "turbo run lint",

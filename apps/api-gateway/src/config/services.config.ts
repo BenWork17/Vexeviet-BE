@@ -45,6 +45,17 @@ export const services: ServiceConfig[] = [
     url: process.env.USER_SERVICE_URL || 'http://localhost:3001',
     prefix: '/bus-templates',
   },
+  {
+    name: 'payment-service',
+    url: process.env.PAYMENT_SERVICE_URL || 'http://localhost:3004',
+    prefix: '/payments',
+    healthCheck: '/health',
+  },
+  {
+    name: 'payment-service-webhooks',
+    url: process.env.PAYMENT_SERVICE_URL || 'http://localhost:3004',
+    prefix: '/webhooks',
+  },
 ];
 
 export const getServiceByPrefix = (prefix: string): ServiceConfig | undefined => {

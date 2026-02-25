@@ -54,6 +54,22 @@ services:
       timeout: 5s
       retries: 5
 
+  ngrok:
+    image: ngrok/ngrok:latest
+    container_name: vexeviet-ngrok
+    restart: unless-stopped
+    command:
+      - "http"
+      - "host.docker.internal:3004"
+    environment:
+      NGROK_AUTHTOKEN: ${NGROK_AUTHTOKEN}
+    ports:
+      - "4040:4040"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    networks:
+      - vexeviet-network
+
 volumes:
   mysql_data:
   redis_data:

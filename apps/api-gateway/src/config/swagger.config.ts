@@ -195,6 +195,8 @@ const options: swaggerJsdoc.Options = {
       { name: 'Search', description: 'Route search' },
       { name: 'Seats', description: 'Seat availability' },
       { name: 'Bookings', description: 'Booking management' },
+      { name: 'Payments', description: 'Payment processing' },
+      { name: 'Webhooks', description: 'External webhooks (VNPay, Momo, etc.)' },
     ],
   },
   apis: [], // We'll define paths inline
@@ -202,24 +204,71 @@ const options: swaggerJsdoc.Options = {
 
 export const swaggerSpec = swaggerJsdoc(options) as Record<string, unknown>;
 
-// Add paths manually since we're proxying to other services
-(swaggerSpec as Record<string, unknown>).paths = {
-  '/health': {
-    get: {
-      tags: ['Health'],
-      summary: 'API Gateway health check',
-      responses: {
-        200: {
-          description: 'Service is healthy',
-          content: {
-            'application/json': {
-              schema: {
-                type: 'object',
-                properties: {
-                  status: { type: 'string', example: 'ok' },
-                  service: { type: 'string', example: 'api-gateway' },
-                  timestamp: { type: 'string', format: 'date-time' },
-                  uptime: { type: 'number' },
+const paths = (swaggerSpec as Record<string, unknown>).paths as Record<string, unknown>;
+
+paths['/health'] = {
+  get: {
+    tags: ['Health'],
+    summary: 'API Gateway health check',
+    responses: {
+      200: {
+        description: 'Service is healthy',
+        content: {
+          'application/json': {
+            schema: {
+              type: 'object',
+              properties: {
+                status: { type: 'string', example: 'ok' },
+                service: { type: 'string', example: 'api-gateway' },
+                timestamp: { type: 'string', format: 'date-time' },
+                uptime: { type: 'number' },
+              },
+            },
+          },
+        },
+      },
+    },
+  },
+};
+
+// Payment Service Paths
+paths['/api/v1/payments'] = {
+  post: {
+    tags: ['Payments'],
+    summary: 'Create a new payment',
+    security: [{ bearerAuth: [] }],
+    requestBody: {
+      required: true,
+      content: {
+        'application/json': {
+          schema: {
+            type: 'object',
+            required: ['bookingId', 'amount', 'bankCode'],
+            properties: {
+              bookingId: { type: 'string', format: 'uuid' },
+              amount: { type: 'number', minimum: 10000 },
+              bankCode: { type: 'string', example: 'VNBANK' },
+              language: { type: 'string', example: 'vn' },
+            },
+          },
+        },
+      },
+    },
+    responses: {
+      201: {
+        description: 'Payment created',
+        content: {
+          'application/json': {
+            schema: {
+              type: 'object',
+              properties: {
+                success: { type: 'boolean' },
+                data: {
+                  type: 'object',
+                  properties: {
+                    paymentId: { type: 'string' },
+                    paymentUrl: { type: 'string' },
+                  },
                 },
               },
             },
@@ -228,6 +277,43 @@ export const swaggerSpec = swaggerJsdoc(options) as Record<string, unknown>;
       },
     },
   },
+};
+
+paths['/api/v1/payments/{paymentId}'] = {
+  get: {
+    tags: ['Payments'],
+    summary: 'Get payment status by ID',
+    parameters: [
+      { name: 'paymentId', in: 'path', required: true, schema: { type: 'string' } },
+    ],
+    responses: {
+      200: { description: 'Payment status' },
+    },
+  },
+};
+
+paths['/api/v1/webhooks/vnpay/return'] = {
+  get: {
+    tags: ['Webhooks'],
+    summary: 'VNPay return URL (client redirect)',
+    responses: {
+      200: { description: 'Redirect processing' },
+    },
+  },
+};
+
+paths['/api/v1/webhooks/vnpay/ipn'] = {
+  get: {
+    tags: ['Webhooks'],
+    summary: 'VNPay IPN URL (server-to-server notification)',
+    responses: {
+      200: { description: 'IPN acknowledgment' },
+    },
+  },
+};
+
+// Merged other service paths
+Object.assign(paths, {
   '/api/v1/users/auth/register': {
     post: {
       tags: ['Auth'],
@@ -249,15 +335,14 @@ export const swaggerSpec = swaggerJsdoc(options) as Record<string, unknown>;
             },
           },
         },
-        400: { description: 'Validation error' },
-        409: { description: 'Email already exists' },
+        400: { description: 'Bad request' },
       },
     },
   },
   '/api/v1/users/auth/login': {
     post: {
       tags: ['Auth'],
-      summary: 'Login with email and password',
+      summary: 'User login',
       requestBody: {
         required: true,
         content: {
@@ -275,282 +360,7 @@ export const swaggerSpec = swaggerJsdoc(options) as Record<string, unknown>;
             },
           },
         },
-        401: { description: 'Invalid credentials' },
-      },
-    },
-  },
-  '/api/v1/users/auth/refresh': {
-    post: {
-      tags: ['Auth'],
-      summary: 'Refresh access token',
-      requestBody: {
-        required: true,
-        content: {
-          'application/json': {
-            schema: {
-              type: 'object',
-              required: ['refreshToken'],
-              properties: {
-                refreshToken: { type: 'string' },
-              },
-            },
-          },
-        },
-      },
-      responses: {
-        200: {
-          description: 'Token refreshed',
-          content: {
-            'application/json': {
-              schema: { $ref: '#/components/schemas/AuthResponse' },
-            },
-          },
-        },
-        401: { description: 'Invalid refresh token' },
-      },
-    },
-  },
-  '/api/v1/users/auth/logout': {
-    post: {
-      tags: ['Auth'],
-      summary: 'Logout user',
-      security: [{ bearerAuth: [] }],
-      responses: {
-        200: { description: 'Logged out successfully' },
-      },
-    },
-  },
-  '/api/v1/users/profile': {
-    get: {
-      tags: ['Users'],
-      summary: 'Get current user profile',
-      security: [{ bearerAuth: [] }],
-      responses: {
-        200: {
-          description: 'User profile',
-          content: {
-            'application/json': {
-              schema: {
-                type: 'object',
-                properties: {
-                  success: { type: 'boolean' },
-                  data: { $ref: '#/components/schemas/User' },
-                },
-              },
-            },
-          },
-        },
         401: { description: 'Unauthorized' },
-      },
-    },
-    patch: {
-      tags: ['Users'],
-      summary: 'Update user profile',
-      security: [{ bearerAuth: [] }],
-      requestBody: {
-        content: {
-          'application/json': {
-            schema: {
-              type: 'object',
-              properties: {
-                fullName: { type: 'string' },
-                phone: { type: 'string' },
-                avatar: { type: 'string' },
-              },
-            },
-          },
-        },
-      },
-      responses: {
-        200: { description: 'Profile updated' },
-        401: { description: 'Unauthorized' },
-      },
-    },
-    delete: {
-      tags: ['Users'],
-      summary: 'Delete user account',
-      security: [{ bearerAuth: [] }],
-      responses: {
-        200: { description: 'Account deleted' },
-        401: { description: 'Unauthorized' },
-      },
-    },
-  },
-  '/api/v1/users/bus-templates': {
-    get: {
-      tags: ['Bus Templates'],
-      summary: 'Get all active bus templates',
-      responses: {
-        200: {
-          description: 'List of bus templates',
-          content: {
-            'application/json': {
-              schema: {
-                type: 'object',
-                properties: {
-                  success: { type: 'boolean' },
-                  data: {
-                    type: 'array',
-                    items: { $ref: '#/components/schemas/BusTemplate' },
-                  },
-                },
-              },
-            },
-          },
-        },
-      },
-    },
-  },
-  '/api/v1/users/bus-templates/{id}': {
-    get: {
-      tags: ['Bus Templates'],
-      summary: 'Get bus template by ID with seats',
-      parameters: [
-        {
-          name: 'id',
-          in: 'path',
-          required: true,
-          schema: { type: 'string', format: 'uuid' },
-        },
-      ],
-      responses: {
-        200: {
-          description: 'Bus template with seats',
-          content: {
-            'application/json': {
-              schema: { $ref: '#/components/schemas/BusTemplate' },
-            },
-          },
-        },
-        404: { description: 'Template not found' },
-      },
-    },
-  },
-  '/api/v1/routes': {
-    get: {
-      tags: ['Routes'],
-      summary: 'Get all routes',
-      parameters: [
-        { name: 'page', in: 'query', schema: { type: 'integer', default: 1 } },
-        { name: 'limit', in: 'query', schema: { type: 'integer', default: 20 } },
-      ],
-      responses: {
-        200: {
-          description: 'List of routes',
-          content: {
-            'application/json': {
-              schema: {
-                type: 'object',
-                properties: {
-                  success: { type: 'boolean' },
-                  data: {
-                    type: 'array',
-                    items: { $ref: '#/components/schemas/Route' },
-                  },
-                  pagination: {
-                    type: 'object',
-                    properties: {
-                      page: { type: 'integer' },
-                      limit: { type: 'integer' },
-                      total: { type: 'integer' },
-                    },
-                  },
-                },
-              },
-            },
-          },
-        },
-      },
-    },
-    post: {
-      tags: ['Routes'],
-      summary: 'Create a new route (Operator only)',
-      security: [{ bearerAuth: [] }],
-      requestBody: {
-        required: true,
-        content: {
-          'application/json': {
-            schema: {
-              type: 'object',
-              required: ['fromCity', 'toCity', 'departureTime', 'arrivalTime', 'price'],
-              properties: {
-                fromCity: { type: 'string' },
-                toCity: { type: 'string' },
-                departureTime: { type: 'string', format: 'date-time' },
-                arrivalTime: { type: 'string', format: 'date-time' },
-                price: { type: 'number' },
-                busTemplateId: { type: 'string', format: 'uuid' },
-              },
-            },
-          },
-        },
-      },
-      responses: {
-        201: { description: 'Route created' },
-        401: { description: 'Unauthorized' },
-        403: { description: 'Forbidden - Operator role required' },
-      },
-    },
-  },
-  '/api/v1/routes/{id}': {
-    get: {
-      tags: ['Routes'],
-      summary: 'Get route by ID',
-      parameters: [
-        {
-          name: 'id',
-          in: 'path',
-          required: true,
-          schema: { type: 'string', format: 'uuid' },
-        },
-      ],
-      responses: {
-        200: {
-          description: 'Route details',
-          content: {
-            'application/json': {
-              schema: { $ref: '#/components/schemas/Route' },
-            },
-          },
-        },
-        404: { description: 'Route not found' },
-      },
-    },
-    put: {
-      tags: ['Routes'],
-      summary: 'Update route (Operator only)',
-      security: [{ bearerAuth: [] }],
-      parameters: [
-        {
-          name: 'id',
-          in: 'path',
-          required: true,
-          schema: { type: 'string', format: 'uuid' },
-        },
-      ],
-      responses: {
-        200: { description: 'Route updated' },
-        401: { description: 'Unauthorized' },
-        403: { description: 'Forbidden' },
-        404: { description: 'Route not found' },
-      },
-    },
-    delete: {
-      tags: ['Routes'],
-      summary: 'Delete route (Operator only)',
-      security: [{ bearerAuth: [] }],
-      parameters: [
-        {
-          name: 'id',
-          in: 'path',
-          required: true,
-          schema: { type: 'string', format: 'uuid' },
-        },
-      ],
-      responses: {
-        200: { description: 'Route deleted' },
-        401: { description: 'Unauthorized' },
-        403: { description: 'Forbidden' },
       },
     },
   },
@@ -587,30 +397,6 @@ export const swaggerSpec = swaggerJsdoc(options) as Record<string, unknown>;
       },
     },
   },
-  '/api/v1/routes/search/popular': {
-    get: {
-      tags: ['Search'],
-      summary: 'Get popular routes',
-      parameters: [
-        { name: 'limit', in: 'query', schema: { type: 'integer', default: 10 } },
-      ],
-      responses: {
-        200: { description: 'Popular routes' },
-      },
-    },
-  },
-  '/api/v1/routes/search/suggestions': {
-    get: {
-      tags: ['Search'],
-      summary: 'Get autocomplete suggestions',
-      parameters: [
-        { name: 'q', in: 'query', required: true, schema: { type: 'string' } },
-      ],
-      responses: {
-        200: { description: 'Suggestions' },
-      },
-    },
-  },
   '/api/v1/booking/seats/availability': {
     get: {
       tags: ['Seats'],
@@ -628,59 +414,6 @@ export const swaggerSpec = swaggerJsdoc(options) as Record<string, unknown>;
             },
           },
         },
-      },
-    },
-  },
-  '/api/v1/booking/seats/check': {
-    post: {
-      tags: ['Seats'],
-      summary: 'Check if specific seats are available',
-      requestBody: {
-        required: true,
-        content: {
-          'application/json': {
-            schema: {
-              type: 'object',
-              required: ['routeId', 'departureDate', 'seatNumbers'],
-              properties: {
-                routeId: { type: 'string', format: 'uuid' },
-                departureDate: { type: 'string', format: 'date' },
-                seatNumbers: { type: 'array', items: { type: 'string' } },
-              },
-            },
-          },
-        },
-      },
-      responses: {
-        200: { description: 'Seat check result' },
-      },
-    },
-  },
-  '/api/v1/booking/seats/hold': {
-    post: {
-      tags: ['Seats'],
-      summary: 'Temporarily hold seats',
-      security: [{ bearerAuth: [] }],
-      requestBody: {
-        required: true,
-        content: {
-          'application/json': {
-            schema: {
-              type: 'object',
-              required: ['routeId', 'departureDate', 'seatNumbers'],
-              properties: {
-                routeId: { type: 'string', format: 'uuid' },
-                departureDate: { type: 'string', format: 'date' },
-                seatNumbers: { type: 'array', items: { type: 'string' } },
-              },
-            },
-          },
-        },
-      },
-      responses: {
-        200: { description: 'Seats held' },
-        401: { description: 'Unauthorized' },
-        409: { description: 'Seats not available' },
       },
     },
   },
@@ -711,92 +444,4 @@ export const swaggerSpec = swaggerJsdoc(options) as Record<string, unknown>;
       },
     },
   },
-  '/api/v1/booking/bookings/my': {
-    get: {
-      tags: ['Bookings'],
-      summary: 'Get current user bookings',
-      security: [{ bearerAuth: [] }],
-      parameters: [
-        { name: 'status', in: 'query', schema: { type: 'string', enum: ['PENDING', 'CONFIRMED', 'CANCELLED', 'COMPLETED'] } },
-        { name: 'page', in: 'query', schema: { type: 'integer', default: 1 } },
-        { name: 'limit', in: 'query', schema: { type: 'integer', default: 20 } },
-      ],
-      responses: {
-        200: { description: 'User bookings' },
-        401: { description: 'Unauthorized' },
-      },
-    },
-  },
-  '/api/v1/booking/bookings/{id}': {
-    get: {
-      tags: ['Bookings'],
-      summary: 'Get booking by ID',
-      security: [{ bearerAuth: [] }],
-      parameters: [
-        {
-          name: 'id',
-          in: 'path',
-          required: true,
-          schema: { type: 'string', format: 'uuid' },
-        },
-      ],
-      responses: {
-        200: { description: 'Booking details' },
-        401: { description: 'Unauthorized' },
-        404: { description: 'Booking not found' },
-      },
-    },
-  },
-  '/api/v1/booking/bookings/code/{code}': {
-    get: {
-      tags: ['Bookings'],
-      summary: 'Get booking by code',
-      parameters: [
-        {
-          name: 'code',
-          in: 'path',
-          required: true,
-          schema: { type: 'string' },
-          example: 'VXV123456',
-        },
-      ],
-      responses: {
-        200: { description: 'Booking details' },
-        404: { description: 'Booking not found' },
-      },
-    },
-  },
-  '/api/v1/booking/bookings/{id}/cancel': {
-    post: {
-      tags: ['Bookings'],
-      summary: 'Cancel a booking',
-      security: [{ bearerAuth: [] }],
-      parameters: [
-        {
-          name: 'id',
-          in: 'path',
-          required: true,
-          schema: { type: 'string', format: 'uuid' },
-        },
-      ],
-      requestBody: {
-        content: {
-          'application/json': {
-            schema: {
-              type: 'object',
-              properties: {
-                reason: { type: 'string' },
-              },
-            },
-          },
-        },
-      },
-      responses: {
-        200: { description: 'Booking cancelled' },
-        401: { description: 'Unauthorized' },
-        404: { description: 'Booking not found' },
-        409: { description: 'Cannot cancel - booking already processed' },
-      },
-    },
-  },
-};
+});

@@ -1,0 +1,100 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: payment-service
+  namespace: vexeviet
+  labels:
+    app: payment-service
+    tier: backend
+    version: v1
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: payment-service
+  template:
+    metadata:
+      labels:
+        app: payment-service
+        tier: backend
+        version: v1
+    spec:
+      containers:
+      - name: payment-service
+        image: vexeviet/payment-service:latest
+        imagePullPolicy: Always
+        ports:
+        - containerPort: 3003
+          name: http
+          protocol: TCP
+        env:
+        - name: NODE_ENV
+          value: "production"
+        - name: PAYMENT_SERVICE_PORT
+          value: "3003"
+        - name: DATABASE_URL
+          valueFrom:
+            secretKeyRef:
+              name: database-secret
+              key: url
+        - name: REDIS_HOST
+          value: "redis"
+        - name: REDIS_PORT
+          value: "6379"
+        - name: VNPAY_TMN_CODE
+          valueFrom:
+            secretKeyRef:
+              name: vnpay-secret
+              key: tmn_code
+        - name: VNPAY_HASH_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: vnpay-secret
+              key: hash_secret
+        - name: VNPAY_URL
+          value: "https://sandbox.vnpayment.vn/paymentv2/vpcpay.html"
+        - name: VNPAY_RETURN_URL
+          value: "https://vexeviet.com/payment/result"
+        - name: VNPAY_API_URL
+          value: "https://sandbox.vnpayment.vn/merchant_webapi/api/transaction"
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "250m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 3003
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 3
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: 3003
+          initialDelaySeconds: 5
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 3
+      restartPolicy: Always
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: payment-service
+  namespace: vexeviet
+  labels:
+    app: payment-service
+spec:
+  type: ClusterIP
+  ports:
+  - port: 3004
+    targetPort: 3003
+    protocol: TCP
+    name: http
+  selector:
+    app: payment-service
