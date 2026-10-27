@@ -56,6 +56,11 @@ export const services: ServiceConfig[] = [
     url: process.env.PAYMENT_SERVICE_URL || 'http://localhost:3004',
     prefix: '/webhooks',
   },
+  {
+    name: 'user-service-audit-logs',
+    url: process.env.USER_SERVICE_URL || 'http://localhost:3001',
+    prefix: '/audit-logs',
+  },
 ];
 
 export const getServiceByPrefix = (prefix: string): ServiceConfig | undefined => {

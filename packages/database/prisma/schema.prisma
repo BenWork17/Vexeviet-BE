@@ -499,3 +499,35 @@ model Transaction {
   @@index([providerTxnId])
   @@map("transactions")
 }
+
+// =====================================================
+// ADMIN AUDIT LOG (shared, written by every service)
+// =====================================================
+
+enum AuditSeverity {
+  INFO
+  WARNING
+  DANGER
+}
+
+model AuditLog {
+  id        String        @id @default(uuid())
+  // No FK to User on purpose: a stale/known-deleted actor must never make an
+  // audit insert fail, and services write here across bounded contexts.
+  actorId   String?       @db.VarChar(64)
+  actorName String        @db.VarChar(160) // snapshot at write time
+  actorRole String        @db.VarChar(20)  // ADMIN | OPERATOR | CUSTOMER | SYSTEM
+  action    String        @db.VarChar(100) // e.g. BOOKING_STATUS_UPDATED
+  target    String        @db.VarChar(160) // e.g. booking:VXV7A8B9
+  targetId  String?       @db.VarChar(64)
+  severity  AuditSeverity @default(INFO)
+  metadata  Json?
+  ipAddress String?       @db.VarChar(45)
+  createdAt DateTime      @default(now())
+
+  @@index([createdAt])
+  @@index([actorId])
+  @@index([action])
+  @@index([severity])
+  @@map("audit_logs")
+}

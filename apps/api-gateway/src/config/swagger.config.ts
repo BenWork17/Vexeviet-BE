@@ -258,6 +258,189 @@ const options: swaggerJsdoc.Options = {
             createdAt: { type: 'string', format: 'date-time' },
           },
         },
+        AdminBooking: {
+          type: 'object',
+          description:
+            'Admin/operator row for the bookings management table (see be-CONTRACT-admin-api.md Shape 1)',
+          properties: {
+            id: { type: 'string', format: 'uuid' },
+            bookingCode: { type: 'string', example: 'VXV7A8B9' },
+            customerName: { type: 'string', example: 'Nguyễn Minh Anh' },
+            customerEmail: { type: 'string', format: 'email', example: 'a@b.c' },
+            customerPhone: { type: 'string', example: '0901234567' },
+            operatorId: { type: 'string', format: 'uuid' },
+            operatorName: { type: 'string', example: 'Phương Trang' },
+            routeId: { type: 'string', format: 'uuid' },
+            routeName: {
+              type: 'string',
+              example: 'TP.HCM → Đà Lạt',
+              description: 'route.origin + literal " → " + route.destination',
+            },
+            departureDate: { type: 'string', format: 'date' },
+            seats: { type: 'array', items: { type: 'string' }, example: ['A1', 'A2'] },
+            status: {
+              type: 'string',
+              enum: ['PENDING', 'CONFIRMED', 'CANCELLED', 'COMPLETED', 'EXPIRED'],
+            },
+            paymentStatus: {
+              type: 'string',
+              nullable: true,
+              description:
+                'Status of the most recent Payment for this booking; null when none exists.',
+              enum: [
+                'PENDING',
+                'PROCESSING',
+                'COMPLETED',
+                'FAILED',
+                'CANCELLED',
+                'EXPIRED',
+                'REFUNDED',
+                'PARTIALLY_REFUNDED',
+              ],
+            },
+            totalAmount: {
+              type: 'number',
+              example: 700000,
+              description: 'totalPrice + serviceFee - discount',
+            },
+            createdAt: { type: 'string', format: 'date-time' },
+          },
+        },
+        AdminPayment: {
+          type: 'object',
+          description:
+            'Admin/operator row for the payments management table (see be-CONTRACT-admin-api.md Shape 2)',
+          properties: {
+            id: { type: 'string', format: 'uuid' },
+            bookingCode: { type: 'string', example: 'VXV7A8B9' },
+            provider: {
+              type: 'string',
+              enum: ['VNPay', 'Momo', 'ZaloPay', 'BankTransfer', 'Cash'],
+              example: 'VNPay',
+              description: 'Display mapping of PaymentMethod; extra labels avoid data loss.',
+            },
+            method: {
+              type: 'string',
+              enum: ['VNPAY', 'MOMO', 'ZALOPAY', 'BANK_TRANSFER', 'CASH'],
+            },
+            status: {
+              type: 'string',
+              enum: [
+                'PENDING',
+                'PROCESSING',
+                'COMPLETED',
+                'FAILED',
+                'CANCELLED',
+                'EXPIRED',
+                'REFUNDED',
+                'PARTIALLY_REFUNDED',
+              ],
+            },
+            amount: { type: 'number', example: 700000 },
+            risk: {
+              type: 'string',
+              enum: ['urgent', 'watch', 'normal'],
+              example: 'normal',
+              description:
+                'Derived, never stored: FAILED/REFUNDED → urgent; PENDING >15min or PROCESSING >30min → watch; else normal.',
+            },
+            transactionRef: { type: 'string', example: 'VXV...' },
+            createdAt: { type: 'string', format: 'date-time' },
+            updatedAt: { type: 'string', format: 'date-time' },
+          },
+        },
+        AdminRoute: {
+          type: 'object',
+          description:
+            'Admin row for the routes management table (see be-CONTRACT-admin-api.md Shape 3)',
+          properties: {
+            id: { type: 'string', format: 'uuid' },
+            operatorId: { type: 'string', format: 'uuid' },
+            operatorName: { type: 'string', example: 'Phương Trang' },
+            name: { type: 'string' },
+            origin: { type: 'string', example: 'TP.HCM' },
+            destination: { type: 'string', example: 'Đà Lạt' },
+            departureTime: { type: 'string', format: 'date-time' },
+            busType: {
+              type: 'string',
+              enum: ['STANDARD', 'VIP', 'LIMOUSINE', 'SLEEPER'],
+            },
+            totalSeats: {
+              type: 'integer',
+              nullable: true,
+              description: 'BusTemplate.totalSeats; null when seat data is unavailable.',
+            },
+            availableSeats: {
+              type: 'integer',
+              nullable: true,
+              description: 'null when seat data is unavailable.',
+            },
+            price: { type: 'number', example: 350000 },
+            status: { type: 'string', enum: ['ACTIVE', 'INACTIVE', 'DELETED'] },
+            seatDataAvailable: {
+              type: 'boolean',
+              description:
+                'false when busTemplateId is null and no seats exist (totalSeats/availableSeats are then null).',
+            },
+          },
+        },
+        AdminUser: {
+          type: 'object',
+          description:
+            'Admin row for the users management table (see be-CONTRACT-admin-api.md Shape 4)',
+          properties: {
+            id: { type: 'string', format: 'uuid' },
+            name: { type: 'string', example: 'Nguyễn Minh Anh', description: 'firstName + lastName' },
+            email: { type: 'string', format: 'email' },
+            phone: { type: 'string', nullable: true },
+            role: { type: 'string', enum: ['ADMIN', 'OPERATOR', 'CUSTOMER'] },
+            status: {
+              type: 'string',
+              enum: ['PENDING_VERIFICATION', 'ACTIVE', 'SUSPENDED', 'DELETED'],
+            },
+            verified: {
+              type: 'boolean',
+              description: 'isEmailVerified && isPhoneVerified',
+            },
+            isEmailVerified: { type: 'boolean' },
+            isPhoneVerified: { type: 'boolean' },
+            createdAt: { type: 'string', format: 'date-time' },
+          },
+        },
+        AuditLog: {
+          type: 'object',
+          description:
+            'Response shape for GET /api/v1/audit-logs (see be-CONTRACT-admin-api.md Shape 5)',
+          properties: {
+            id: { type: 'string', format: 'uuid' },
+            actor: {
+              type: 'string',
+              example: 'VeXeViet Admin',
+              description: 'Stored AuditLog.actorName (renamed in the response).',
+            },
+            actorId: { type: 'string', nullable: true },
+            role: {
+              type: 'string',
+              enum: ['ADMIN', 'OPERATOR', 'CUSTOMER', 'SYSTEM'],
+              description: 'Stored AuditLog.actorRole (renamed in the response).',
+            },
+            action: { type: 'string', example: 'USER_ROLE_UPDATED' },
+            target: { type: 'string', example: 'user:9f0c' },
+            targetId: { type: 'string', nullable: true },
+            severity: {
+              type: 'string',
+              enum: ['info', 'warning', 'danger'],
+              description:
+                'Lowercase in the response; the DB enum stays uppercase and is converted in the mapper.',
+            },
+            metadata: {
+              type: 'object',
+              nullable: true,
+              example: { from: 'CUSTOMER', to: 'OPERATOR' },
+            },
+            createdAt: { type: 'string', format: 'date-time' },
+          },
+        },
       },
     },
     tags: [
@@ -271,6 +454,8 @@ const options: swaggerJsdoc.Options = {
       { name: 'Bookings', description: 'Booking management' },
       { name: 'Payments', description: 'Payment processing' },
       { name: 'Webhooks', description: 'External webhooks (VNPay, Momo, etc.)' },
+      { name: 'Admin', description: 'Admin & operator management endpoints (role ADMIN unless noted)' },
+      { name: 'Audit Logs', description: 'Shared admin audit trail (role ADMIN)' },
     ],
   },
   apis: [], // We'll define paths inline
@@ -946,6 +1131,465 @@ Object.assign(paths, {
             },
           },
         },
+      },
+    },
+  },
+  // ---------------------------------------------------
+  // Admin & operator management (admin UI contract)
+  // ---------------------------------------------------
+  '/api/v1/bookings/admin/all': {
+    get: {
+      tags: ['Admin', 'Bookings'],
+      summary: 'List all bookings (admin)',
+      description:
+        'Danh sách booking toàn hệ thống cho trang quản trị. Yêu cầu Bearer JWT với role ADMIN, hoặc role OPERATOR (chỉ trả booking thuộc tuyến/chuyến của nhà xe mình).',
+      security: [{ bearerAuth: [] }],
+      parameters: [
+        { name: 'status', in: 'query', schema: { type: 'string', enum: ['PENDING', 'CONFIRMED', 'CANCELLED', 'COMPLETED', 'EXPIRED'] }, description: 'Filter theo trạng thái booking' },
+        { name: 'paymentStatus', in: 'query', schema: { type: 'string', enum: ['PENDING', 'PROCESSING', 'COMPLETED', 'FAILED', 'CANCELLED', 'EXPIRED', 'REFUNDED', 'PARTIALLY_REFUNDED'] }, description: 'Filter theo trạng thái thanh toán' },
+        { name: 'operatorId', in: 'query', schema: { type: 'string', format: 'uuid' }, description: 'Filter theo nhà xe (ADMIN only)' },
+        { name: 'q', in: 'query', schema: { type: 'string' }, description: 'Tìm theo mã booking / email hoặc tên khách (không phân biệt hoa thường)' },
+        { name: 'from', in: 'query', schema: { type: 'string', format: 'date' }, description: 'Từ ngày khởi hành' },
+        { name: 'to', in: 'query', schema: { type: 'string', format: 'date' }, description: 'Đến ngày khởi hành' },
+        { name: 'page', in: 'query', schema: { type: 'integer', default: 1, minimum: 1 } },
+        { name: 'limit', in: 'query', schema: { type: 'integer', default: 20, minimum: 1, maximum: 100 } },
+        { name: 'sort', in: 'query', schema: { type: 'string', enum: ['createdAt', '-createdAt', 'departureDate', '-departureDate'], default: '-createdAt' }, description: 'Sắp xếp (mặc định -createdAt)' },
+      ],
+      responses: {
+        200: {
+          description: 'Paginated bookings',
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                properties: {
+                  success: { type: 'boolean', example: true },
+                  data: { type: 'array', items: { $ref: '#/components/schemas/AdminBooking' } },
+                  pagination: {
+                    type: 'object',
+                    properties: {
+                      page: { type: 'integer' },
+                      limit: { type: 'integer' },
+                      total: { type: 'integer' },
+                      totalPages: { type: 'integer' },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+        401: { description: 'Unauthorized' },
+        403: { description: 'Forbidden - requires role ADMIN or OPERATOR' },
+      },
+    },
+  },
+  '/api/v1/bookings/admin/dashboard': {
+    get: {
+      tags: ['Admin', 'Bookings'],
+      summary: 'Booking dashboard aggregates (admin)',
+      description:
+        'Số liệu tổng hợp cho dashboard admin (contract Shape 1): booking hôm nay, doanh thu đã hoàn tất, thanh toán cần xử lý, tuyến đang hoạt động, số nhà xe, xu hướng doanh thu và phân bố booking theo trạng thái trong cửa sổ N ngày. Yêu cầu Bearer JWT với role ADMIN.',
+      security: [{ bearerAuth: [] }],
+      parameters: [
+        {
+          name: 'days',
+          in: 'query',
+          schema: { type: 'integer', default: 7, minimum: 1, maximum: 90 },
+          description: 'Cửa sổ số ngày (1..90, mặc định 7)',
+        },
+      ],
+      responses: {
+        200: {
+          description: 'Dashboard aggregates',
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                properties: {
+                  success: { type: 'boolean', example: true },
+                  data: {
+                    type: 'object',
+                    properties: {
+                      todayBookings: { type: 'integer', example: 12 },
+                      revenueCompleted: { type: 'number', example: 8450000 },
+                      paymentsNeedingAction: { type: 'integer', example: 3 },
+                      activeRoutes: { type: 'integer', example: 41 },
+                      operatorCount: { type: 'integer', example: 9 },
+                      revenueTrend: {
+                        type: 'array',
+                        description: 'One zero-filled point per day across the window',
+                        items: {
+                          type: 'object',
+                          properties: {
+                            label: { type: 'string', example: '2026-10-21' },
+                            value: { type: 'number', example: 4200000 },
+                          },
+                        },
+                      },
+                      bookingStatusSummary: {
+                        type: 'array',
+                        items: {
+                          type: 'object',
+                          properties: {
+                            label: { type: 'string', example: 'CONFIRMED' },
+                            value: { type: 'integer', example: 38 },
+                          },
+                        },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+        401: { description: 'Unauthorized' },
+        403: { description: 'Forbidden - requires role ADMIN' },
+      },
+    },
+  },
+  '/api/v1/payments/admin/all': {
+    get: {
+      tags: ['Admin', 'Payments'],
+      summary: 'List all payments (admin)',
+      description:
+        'Danh sách giao dịch thanh toán toàn hệ thống. Yêu cầu Bearer JWT với role ADMIN, hoặc role OPERATOR (chỉ trả giao dịch thuộc dữ liệu của nhà xe mình).',
+      security: [{ bearerAuth: [] }],
+      parameters: [
+        { name: 'status', in: 'query', schema: { type: 'string', enum: ['PENDING', 'PROCESSING', 'COMPLETED', 'FAILED', 'CANCELLED', 'EXPIRED', 'REFUNDED', 'PARTIALLY_REFUNDED'] } },
+        { name: 'method', in: 'query', schema: { type: 'string', enum: ['VNPAY', 'MOMO', 'ZALOPAY', 'BANK_TRANSFER', 'CASH'] } },
+        { name: 'provider', in: 'query', schema: { type: 'string', enum: ['VNPay', 'Momo', 'ZaloPay', 'BankTransfer', 'Cash'] }, description: 'Filter theo nhà cung cấp (nhãn hiển thị)' },
+        { name: 'bookingCode', in: 'query', schema: { type: 'string' }, description: 'Tìm theo mã booking' },
+        { name: 'from', in: 'query', schema: { type: 'string', format: 'date' }, description: 'Từ ngày tạo' },
+        { name: 'to', in: 'query', schema: { type: 'string', format: 'date' }, description: 'Đến ngày tạo' },
+        { name: 'page', in: 'query', schema: { type: 'integer', default: 1, minimum: 1 } },
+        { name: 'limit', in: 'query', schema: { type: 'integer', default: 20, minimum: 1, maximum: 100 } },
+      ],
+      responses: {
+        200: {
+          description: 'Paginated payments',
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                properties: {
+                  success: { type: 'boolean', example: true },
+                  data: { type: 'array', items: { $ref: '#/components/schemas/AdminPayment' } },
+                  pagination: {
+                    type: 'object',
+                    properties: {
+                      page: { type: 'integer' },
+                      limit: { type: 'integer' },
+                      total: { type: 'integer' },
+                      totalPages: { type: 'integer' },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+        401: { description: 'Unauthorized' },
+        403: { description: 'Forbidden - requires role ADMIN or OPERATOR' },
+      },
+    },
+  },
+  '/api/v1/payments/admin/summary': {
+    get: {
+      tags: ['Admin', 'Payments'],
+      summary: 'Payment summary aggregates (admin)',
+      description:
+        'Tổng hợp thanh toán (contract Shape 2): tổng tiền đã hoàn tất, số lượng theo từng trạng thái, xu hướng theo ngày và số giao dịch hết hạn trong N ngày gần nhất. Yêu cầu Bearer JWT với role ADMIN.',
+      security: [{ bearerAuth: [] }],
+      parameters: [
+        { name: 'days', in: 'query', schema: { type: 'integer', default: 7, minimum: 1, maximum: 90 }, description: 'Số ngày gần nhất (1..90, mặc định 7)' },
+      ],
+      responses: {
+        200: {
+          description: 'Payment summary',
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                properties: {
+                  success: { type: 'boolean', example: true },
+                  data: {
+                    type: 'object',
+                    properties: {
+                      totalCompleted: { type: 'number', example: 1234.5 },
+                      countByStatus: {
+                        type: 'array',
+                        items: {
+                          type: 'object',
+                          properties: {
+                            label: { type: 'string', example: 'COMPLETED' },
+                            value: { type: 'integer', example: 88 },
+                          },
+                        },
+                      },
+                      providerTrend: {
+                        type: 'array',
+                        items: {
+                          type: 'object',
+                          properties: {
+                            label: { type: 'string', example: '2026-10-21' },
+                            value: { type: 'number', example: 4200000 },
+                          },
+                        },
+                      },
+                      expiredCount: { type: 'integer', example: 4 },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+        401: { description: 'Unauthorized' },
+        403: { description: 'Forbidden - requires role ADMIN' },
+      },
+    },
+  },
+  '/api/v1/routes/admin/all': {
+    get: {
+      tags: ['Admin', 'Routes'],
+      summary: 'List all routes (admin)',
+      description:
+        'Danh sách tuyến xe cho trang quản trị. Mặc định loại trừ tuyến đã xóa mềm; chỉ trả các tuyến status=DELETED khi includeDeleted=true. Yêu cầu Bearer JWT với role ADMIN.',
+      security: [{ bearerAuth: [] }],
+      parameters: [
+        { name: 'status', in: 'query', schema: { type: 'string', enum: ['ACTIVE', 'INACTIVE', 'DELETED'] }, description: 'Filter theo trạng thái' },
+        { name: 'operatorId', in: 'query', schema: { type: 'string', format: 'uuid' } },
+        { name: 'q', in: 'query', schema: { type: 'string' }, description: 'Tìm theo tên tuyến / điểm đi / điểm đến' },
+        { name: 'page', in: 'query', schema: { type: 'integer', default: 1, minimum: 1 } },
+        { name: 'limit', in: 'query', schema: { type: 'integer', default: 20, minimum: 1, maximum: 100 } },
+        { name: 'includeDeleted', in: 'query', schema: { type: 'boolean', default: false }, description: 'true → cũng trả các tuyến status=DELETED (mặc định false)' },
+      ],
+      responses: {
+        200: {
+          description: 'Paginated routes',
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                properties: {
+                  success: { type: 'boolean', example: true },
+                  data: { type: 'array', items: { $ref: '#/components/schemas/AdminRoute' } },
+                  pagination: {
+                    type: 'object',
+                    properties: {
+                      page: { type: 'integer' },
+                      limit: { type: 'integer' },
+                      total: { type: 'integer' },
+                      totalPages: { type: 'integer' },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+        401: { description: 'Unauthorized' },
+        403: { description: 'Forbidden - requires role ADMIN' },
+      },
+    },
+  },
+  '/api/v1/routes/admin/operators': {
+    get: {
+      tags: ['Admin', 'Routes'],
+      summary: 'List operator aggregates (admin)',
+      description:
+        'Danh sách nhà xe suy ra từ User role=OPERATOR (không có bảng operator riêng), kèm số tuyến đang hoạt động và số booking 30 ngày gần nhất. rating luôn là null vì schema chưa có dữ liệu đánh giá. Yêu cầu Bearer JWT với role ADMIN.',
+      security: [{ bearerAuth: [] }],
+      parameters: [
+        { name: 'page', in: 'query', schema: { type: 'integer', default: 1, minimum: 1 } },
+        { name: 'limit', in: 'query', schema: { type: 'integer', default: 20, minimum: 1, maximum: 100 } },
+      ],
+      responses: {
+        200: {
+          description: 'Paginated operator aggregates',
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                properties: {
+                  success: { type: 'boolean', example: true },
+                  data: {
+                    type: 'array',
+                    items: {
+                      type: 'object',
+                      properties: {
+                        id: { type: 'string', format: 'uuid' },
+                        name: { type: 'string', example: 'Phương Trang' },
+                        contactEmail: { type: 'string', format: 'email', example: 'ops@phuongtrang.vn' },
+                        activeRoutes: { type: 'integer', example: 12 },
+                        monthlyBookings: { type: 'integer', example: 340 },
+                        rating: {
+                          type: 'number',
+                          nullable: true,
+                          description: 'Always null — no rating data exists in the schema.',
+                        },
+                        status: {
+                          type: 'string',
+                          enum: ['PENDING_VERIFICATION', 'ACTIVE', 'SUSPENDED', 'DELETED'],
+                        },
+                        createdAt: { type: 'string', format: 'date-time' },
+                      },
+                    },
+                  },
+                  pagination: {
+                    type: 'object',
+                    properties: {
+                      page: { type: 'integer' },
+                      limit: { type: 'integer' },
+                      total: { type: 'integer' },
+                      totalPages: { type: 'integer' },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+        401: { description: 'Unauthorized' },
+        403: { description: 'Forbidden - requires role ADMIN' },
+      },
+    },
+  },
+  '/api/v1/users/admin/all': {
+    get: {
+      tags: ['Admin', 'Users'],
+      summary: 'List all users (admin)',
+      description:
+        'Danh sách người dùng cho trang quản trị. Yêu cầu Bearer JWT với role ADMIN.',
+      security: [{ bearerAuth: [] }],
+      parameters: [
+        { name: 'role', in: 'query', schema: { type: 'string', enum: ['ADMIN', 'OPERATOR', 'CUSTOMER'] } },
+        { name: 'status', in: 'query', schema: { type: 'string', enum: ['PENDING_VERIFICATION', 'ACTIVE', 'SUSPENDED', 'DELETED'] } },
+        { name: 'q', in: 'query', schema: { type: 'string' }, description: 'Tìm theo email / tên / SĐT' },
+        { name: 'page', in: 'query', schema: { type: 'integer', default: 1, minimum: 1 } },
+        { name: 'limit', in: 'query', schema: { type: 'integer', default: 20, minimum: 1, maximum: 100 } },
+      ],
+      responses: {
+        200: {
+          description: 'Paginated users',
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                properties: {
+                  success: { type: 'boolean', example: true },
+                  data: { type: 'array', items: { $ref: '#/components/schemas/AdminUser' } },
+                  pagination: {
+                    type: 'object',
+                    properties: {
+                      page: { type: 'integer' },
+                      limit: { type: 'integer' },
+                      total: { type: 'integer' },
+                      totalPages: { type: 'integer' },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+        401: { description: 'Unauthorized' },
+        403: { description: 'Forbidden - requires role ADMIN' },
+      },
+    },
+  },
+  '/api/v1/users/admin/{id}': {
+    patch: {
+      tags: ['Admin', 'Users'],
+      summary: 'Update a user role or status (admin)',
+      description:
+        'Cập nhật role và/hoặc status của một người dùng. Yêu cầu Bearer JWT với role ADMIN.',
+      security: [{ bearerAuth: [] }],
+      parameters: [
+        { name: 'id', in: 'path', required: true, schema: { type: 'string', format: 'uuid' }, description: 'User ID' },
+      ],
+      requestBody: {
+        required: true,
+        content: {
+          'application/json': {
+            schema: {
+              type: 'object',
+              minProperties: 1,
+              properties: {
+                role: { type: 'string', enum: ['ADMIN', 'OPERATOR', 'CUSTOMER'] },
+                status: { type: 'string', enum: ['PENDING_VERIFICATION', 'ACTIVE', 'SUSPENDED', 'DELETED'] },
+              },
+            },
+          },
+        },
+      },
+      responses: {
+        200: {
+          description: 'User updated',
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                properties: {
+                  success: { type: 'boolean', example: true },
+                  data: { $ref: '#/components/schemas/AdminUser' },
+                },
+              },
+            },
+          },
+        },
+        400: { description: 'Invalid body' },
+        401: { description: 'Unauthorized' },
+        403: { description: 'Forbidden - requires role ADMIN' },
+        404: { description: 'User not found' },
+      },
+    },
+  },
+  '/api/v1/audit-logs': {
+    get: {
+      tags: ['Audit Logs'],
+      summary: 'List audit logs (admin)',
+      description:
+        'Nhật ký thao tác quản trị dùng chung, mới nhất trước. Yêu cầu Bearer JWT với role ADMIN.',
+      security: [{ bearerAuth: [] }],
+      parameters: [
+        { name: 'actor', in: 'query', schema: { type: 'string' }, description: 'Filter theo actorId hoặc tên actor' },
+        { name: 'severity', in: 'query', schema: { type: 'string', enum: ['INFO', 'WARNING', 'DANGER'] } },
+        { name: 'action', in: 'query', schema: { type: 'string' }, description: 'Filter theo action, ví dụ USER_ROLE_UPDATED' },
+        { name: 'target', in: 'query', schema: { type: 'string' }, description: 'Filter theo target, ví dụ user:9f0c' },
+        { name: 'from', in: 'query', schema: { type: 'string', format: 'date' }, description: 'Từ ngày tạo' },
+        { name: 'to', in: 'query', schema: { type: 'string', format: 'date' }, description: 'Đến ngày tạo' },
+        { name: 'page', in: 'query', schema: { type: 'integer', default: 1, minimum: 1 } },
+        { name: 'limit', in: 'query', schema: { type: 'integer', default: 20, minimum: 1, maximum: 100 } },
+      ],
+      responses: {
+        200: {
+          description: 'Paginated audit logs (newest first)',
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                properties: {
+                  success: { type: 'boolean', example: true },
+                  data: { type: 'array', items: { $ref: '#/components/schemas/AuditLog' } },
+                  pagination: {
+                    type: 'object',
+                    properties: {
+                      page: { type: 'integer' },
+                      limit: { type: 'integer' },
+                      total: { type: 'integer' },
+                      totalPages: { type: 'integer' },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+        401: { description: 'Unauthorized' },
+        403: { description: 'Forbidden - requires role ADMIN' },
       },
     },
   },
