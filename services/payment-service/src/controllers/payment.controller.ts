@@ -57,7 +57,14 @@ export class PaymentController {
         return;
       }
 
-      const idempotencyKey = req.headers['idempotency-key'] as string | undefined;
+      const rawIdempotencyKey = req.headers['idempotency-key'] as string | undefined;
+
+      // Namespace the client key by the token's user. The cache key is global in
+      // Redis, so without this a caller who guessed another user's key would get
+      // back that user's cached payment response.
+      const idempotencyKey = rawIdempotencyKey
+        ? `${user.userId}:${rawIdempotencyKey}`
+        : undefined;
 
       const result = await paymentService.createPayment(data, idempotencyKey);
 
