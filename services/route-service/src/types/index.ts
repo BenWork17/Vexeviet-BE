@@ -47,7 +47,8 @@ export interface CreateRouteRequest {
   duration: number;
   busType?: BusType;
   licensePlate?: string;
-  totalSeats?: number;
+  /** Required: the seat layout this route sells. Must be an existing, active template. */
+  busTemplateId: string;
   price: number;
   amenities?: Amenity[];
   pickupPoints?: PickupDropoffPoint[];
@@ -56,7 +57,12 @@ export interface CreateRouteRequest {
   images?: string[];
 }
 
-export interface UpdateRouteRequest extends Partial<CreateRouteRequest> {
+/**
+ * `busTemplateId` is deliberately excluded: re-assigning a template on update is
+ * not implemented (it would strand existing BookingSeat rows keyed on the old
+ * layout), so it must not appear to be settable here either.
+ */
+export interface UpdateRouteRequest extends Omit<Partial<CreateRouteRequest>, 'busTemplateId'> {
   status?: RouteStatus;
   availableSeats?: number;
 }

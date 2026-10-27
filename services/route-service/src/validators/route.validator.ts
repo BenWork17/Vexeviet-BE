@@ -10,8 +10,16 @@ interface CreateRouteBody {
   duration: number;
   price: number;
   busType?: BusType;
-  totalSeats?: number;
+  busTemplateId: string;
+  /** Not part of the create contract; declared only so it can be rejected. */
+  totalSeats?: unknown;
 }
+
+/**
+ * Shape check only. Whether the template exists and is active is a database
+ * question and is answered in `RouteService.create` — never here.
+ */
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 interface UpdateRouteBody {
   departureTime?: string;
@@ -26,6 +34,17 @@ export const validateCreateRoute = (req: Request, res: Response, next: NextFunct
   const { name, origin, destination, departureTime, arrivalTime, duration, price } = body;
 
   const errors: string[] = [];
+
+  // `totalSeats` is not part of the create contract: total/available seats are
+  // derived from the bus template and booking seats (see the schema comment on
+  // `Route`). This validator does not reject unknown keys, so silently dropping
+  // the old block would still let the field through to be ignored — reject it
+  // instead, so the API stops accepting a field it cannot honour.
+  if (body.totalSeats !== undefined) {
+    errors.push(
+      'totalSeats is not accepted: total seats derive from the bus template (busTemplateId)'
+    );
+  }
 
   if (!name || typeof name !== 'string' || name.trim().length === 0) {
     errors.push('Name is required');
@@ -60,10 +79,16 @@ export const validateCreateRoute = (req: Request, res: Response, next: NextFunct
     errors.push(`Bus type must be one of: ${Object.values(BusType).join(', ')}`);
   }
 
-  if (body.totalSeats !== undefined) {
-    if (typeof body.totalSeats !== 'number' || body.totalSeats <= 0) {
-      errors.push('Total seats must be a positive number');
-    }
+  // Required: a route without a seat template cannot sell seats. Existence and
+  // `isActive` are checked against the database in `RouteService.create`.
+  if (body.busTemplateId === undefined || body.busTemplateId === null) {
+    errors.push('busTemplateId is required');
+  } else if (typeof body.busTemplateId !== 'string') {
+    errors.push('busTemplateId must be a string');
+  } else if (body.busTemplateId.trim().length === 0) {
+    errors.push('busTemplateId must be a non-empty string');
+  } else if (!UUID_PATTERN.test(body.busTemplateId)) {
+    errors.push('busTemplateId must be a valid UUID');
   }
 
   if (errors.length > 0) {

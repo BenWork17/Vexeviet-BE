@@ -92,7 +92,38 @@ export class RouteService {
     return totalSeats - occupiedSeatsCount;
   }
 
+  /**
+   * Resolve the seat template a new route will sell seats from.
+   *
+   * Throws a plain `Error` naming the field, matching this service's idiom:
+   * `RouteController.create` maps every caught error to a `400` with the
+   * message, which is the status the contract asks for.
+   */
+  private async requireActiveBusTemplate(busTemplateId: string): Promise<void> {
+    // Guard the service boundary too: Prisma treats `id: undefined` in a `where`
+    // as "not provided", so the lookup below would otherwise match an arbitrary
+    // active template for a caller that bypassed the validator.
+    if (typeof busTemplateId !== 'string' || busTemplateId.trim().length === 0) {
+      throw new Error('busTemplateId does not reference an existing, active bus template');
+    }
+
+    const template = await prisma.busTemplate.findFirst({
+      where: { id: busTemplateId, isActive: true },
+      select: { id: true },
+    });
+
+    if (!template) {
+      throw new Error(
+        'busTemplateId does not reference an existing, active bus template'
+      );
+    }
+  }
+
   async create(operatorId: string, data: CreateRouteRequest): Promise<Route> {
+    // Resolve before building anything: a created route with no template would
+    // be permanently seat-less (`findById` reports 0 seats, seat map 500s).
+    await this.requireActiveBusTemplate(data.busTemplateId);
+
     const routeData: Prisma.RouteCreateInput = {
       name: data.name,
       description: data.description,
@@ -114,6 +145,7 @@ export class RouteService {
       policies: data.policies ? (JSON.parse(JSON.stringify(data.policies)) as Prisma.InputJsonValue) : undefined,
       images: data.images ? (JSON.parse(JSON.stringify(data.images)) as Prisma.InputJsonValue) : undefined,
       operator: { connect: { id: operatorId } },
+      busTemplate: { connect: { id: data.busTemplateId } },
     };
 
     return this.routeRepo.create(routeData);
