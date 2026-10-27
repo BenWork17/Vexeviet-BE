@@ -25,6 +25,33 @@ type RouteWithAvailability = Route & {
 const CACHE_TTL = 60; // Reduced to 1 minute for more accurate seat availability
 
 export class SearchService {
+  private isTransientPrismaConnectionError(error: unknown): boolean {
+    if (!(error instanceof Error)) {
+      return false;
+    }
+
+    return (
+      error.message.includes('Server has closed the connection') ||
+      error.message.includes('Connection terminated') ||
+      error.message.includes('ECONNRESET')
+    );
+  }
+
+  private async withPrismaRetry<T>(operation: () => Promise<T>): Promise<T> {
+    try {
+      return await operation();
+    } catch (error) {
+      if (!this.isTransientPrismaConnectionError(error)) {
+        throw error;
+      }
+
+      const message = error instanceof Error ? error.message : String(error);
+      console.warn('Transient Prisma connection error, retrying once:', message);
+      await prisma.$disconnect();
+      return operation();
+    }
+  }
+
   /**
    * Get actual total seats from BusTemplate for routes
    * This counts only seats with isAvailable=true in the Seat table
@@ -48,16 +75,18 @@ export class SearchService {
     }
 
     // Count actual available seats per template
-    const templateSeatCounts = await prisma.seat.groupBy({
-      by: ['busTemplateId'],
-      where: {
-        busTemplateId: { in: busTemplateIds },
-        isAvailable: true,
-      },
-      _count: {
-        id: true,
-      },
-    });
+    const templateSeatCounts = await this.withPrismaRetry(() =>
+      prisma.seat.groupBy({
+        by: ['busTemplateId'],
+        where: {
+          busTemplateId: { in: busTemplateIds },
+          isAvailable: true,
+        },
+        _count: {
+          id: true,
+        },
+      })
+    );
 
     // Create map: busTemplateId -> actualSeatCount
     const templateCountMap = new Map<string, number>();
@@ -110,22 +139,24 @@ export class SearchService {
     }
 
     // Batch query: Get all occupied seats for these routes
-    const occupiedSeats = await prisma.bookingSeat.groupBy({
-      by: ['routeId', 'departureDate'],
-      where: {
-        routeId: { in: routes.map(r => r.id) },
-        OR: [
-          { status: SeatStatus.BOOKED },
-          {
-            status: SeatStatus.HELD,
-            lockedUntil: { gt: new Date() },
-          },
-        ],
-      },
-      _count: {
-        id: true,
-      },
-    });
+    const occupiedSeats = await this.withPrismaRetry(() =>
+      prisma.bookingSeat.groupBy({
+        by: ['routeId', 'departureDate'],
+        where: {
+          routeId: { in: routes.map(r => r.id) },
+          OR: [
+            { status: SeatStatus.BOOKED },
+            {
+              status: SeatStatus.HELD,
+              lockedUntil: { gt: new Date() },
+            },
+          ],
+        },
+        _count: {
+          id: true,
+        },
+      })
+    );
 
     // Create a lookup map for occupied seats
     const occupiedMap = new Map<string, number>();
@@ -165,24 +196,26 @@ export class SearchService {
     const where = this.buildWhereClause(params);
     const orderBy = this.buildOrderBy(params.sortBy, params.sortOrder);
 
-    const [routes, total] = await Promise.all([
-      prisma.route.findMany({
-        where,
-        orderBy,
-        skip,
-        take: pageSize,
-        include: {
-          operator: {
-            select: {
-              id: true,
-              firstName: true,
-              lastName: true,
+    const [routes, total] = await this.withPrismaRetry(() =>
+      Promise.all([
+        prisma.route.findMany({
+          where,
+          orderBy,
+          skip,
+          take: pageSize,
+          include: {
+            operator: {
+              select: {
+                id: true,
+                firstName: true,
+                lastName: true,
+              },
             },
           },
-        },
-      }),
-      prisma.route.count({ where }),
-    ]);
+        }),
+        prisma.route.count({ where }),
+      ])
+    );
 
     // Calculate real-time available seats for all routes (using BusTemplate actual seats)
     const { availabilityMap, actualTotalSeatsMap } = await this.calculateAvailableSeatsForRoutes(
@@ -233,14 +266,16 @@ export class SearchService {
       return cached;
     }
 
-    const routes = await prisma.route.findMany({
-      where: {
-        status: RouteStatus.ACTIVE,
-        departureTime: { gte: new Date() },
-      },
-      orderBy: { createdAt: 'desc' },
-      take: limit,
-    });
+    const routes = await this.withPrismaRetry(() =>
+      prisma.route.findMany({
+        where: {
+          status: RouteStatus.ACTIVE,
+          departureTime: { gte: new Date() },
+        },
+        orderBy: { createdAt: 'desc' },
+        take: limit,
+      })
+    );
 
     // Calculate real-time available seats for popular routes (using BusTemplate actual seats)
     const { availabilityMap, actualTotalSeatsMap } = await this.calculateAvailableSeatsForRoutes(routes);
@@ -273,15 +308,17 @@ export class SearchService {
       return cached;
     }
 
-    const routes = await prisma.route.findMany({
-      where: {
-        status: RouteStatus.ACTIVE,
-        [field]: { contains: query },
-      },
-      select: { origin: true, destination: true },
-      distinct: [field],
-      take: 10,
-    });
+    const routes = await this.withPrismaRetry(() =>
+      prisma.route.findMany({
+        where: {
+          status: RouteStatus.ACTIVE,
+          [field]: { contains: query },
+        },
+        select: { origin: true, destination: true },
+        distinct: [field],
+        take: 10,
+      })
+    );
 
     const suggestions = routes.map((r) => field === 'origin' ? r.origin : r.destination);
 

@@ -27,6 +27,7 @@ export interface TokenPayload {
   userId: string;
   email: string;
   role: UserRole;
+  jti: string;
 }
 
 export interface VerifyOTPRequest {

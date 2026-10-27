@@ -51,17 +51,19 @@ export class SeatRepository {
     departureDate: Date,
     seatNumbers: string[]
   ): Promise<{ available: boolean; unavailableSeats: string[] }> {
+    const normalizedDate = new Date(departureDate);
+    normalizedDate.setUTCHours(0, 0, 0, 0);
+
     const existingSeats = await prisma.bookingSeat.findMany({
       where: {
         routeId,
-        departureDate,
+        departureDate: normalizedDate,
         seatNumber: { in: seatNumbers },
         OR: [
           { status: SeatStatus.BOOKED },
           {
             status: SeatStatus.HELD,
             lockedUntil: { gt: new Date() },
-            bookingId: { not: null }, // Only unavailable if actually linked to a booking
           },
         ],
       },
@@ -117,13 +119,16 @@ export class SeatRepository {
           seat.status === SeatStatus.BOOKED ||
           (seat.status === SeatStatus.HELD &&
             seat.holdId !== holdId &&
-            seat.bookingId !== null && // If linked to a booking, it's a real conflict
             seat.lockedUntil > new Date())
       );
 
       if (conflicts.length > 0) {
         const unavailableSeats = conflicts.map(s => s.seatNumber);
-        const error = new Error(`Seats unavailable: ${unavailableSeats.join(', ')}`) as any;
+        const error = new Error(`Seats unavailable: ${unavailableSeats.join(', ')}`) as Error & {
+          statusCode: number;
+          code: string;
+          details: { unavailableSeats: string[] };
+        };
         error.statusCode = 409;
         error.code = 'SEATS_UNAVAILABLE';
         error.details = { unavailableSeats };

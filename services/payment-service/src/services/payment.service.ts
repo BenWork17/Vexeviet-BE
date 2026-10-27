@@ -7,6 +7,7 @@ import {
   RefundRequest,
   RefundResponse,
   PaymentDTO,
+  PaymentStatusResponse,
 } from '../types';
 import { paymentRepository } from '../repositories/payment.repository';
 import { transactionRepository } from '../repositories/transaction.repository';
@@ -19,6 +20,17 @@ import {
 import { PaymentError } from '../middlewares/error.middleware';
 
 export class PaymentService {
+  private isFinalStatus(status: PaymentStatus): boolean {
+    return (
+      status === PaymentStatus.COMPLETED ||
+      status === PaymentStatus.FAILED ||
+      status === PaymentStatus.CANCELLED ||
+      status === PaymentStatus.EXPIRED ||
+      status === PaymentStatus.REFUNDED ||
+      status === PaymentStatus.PARTIALLY_REFUNDED
+    );
+  }
+
   async createPayment(
     data: CreatePaymentRequest,
     idempotencyKey?: string
@@ -114,6 +126,24 @@ export class PaymentService {
       paidAt: payment.paidAt,
       expiredAt: payment.expiredAt,
       createdAt: payment.createdAt,
+    };
+  }
+
+  async getPaymentStatusByTransactionRef(transactionRef: string): Promise<PaymentStatusResponse | null> {
+    const payment = await paymentRepository.findByTransactionRef(transactionRef);
+
+    if (!payment) {
+      return null;
+    }
+
+    return {
+      paymentId: payment.id,
+      bookingId: payment.bookingId,
+      transactionRef: payment.transactionRef,
+      status: payment.status,
+      isFinal: this.isFinalStatus(payment.status),
+      paidAt: payment.paidAt,
+      expiredAt: payment.expiredAt,
     };
   }
 

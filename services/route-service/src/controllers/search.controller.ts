@@ -71,6 +71,7 @@ export class SearchController {
       res.status(200).json({
         success: true,
         data: routes,
+        routes, // Keep for FE compatibility
       });
     } catch (error) {
       res.status(500).json({

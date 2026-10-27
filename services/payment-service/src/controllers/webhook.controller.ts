@@ -1,5 +1,6 @@
 import { Request, Response } from 'express';
 import { vnpayService } from '../services/vnpay.service';
+import { paymentRepository } from '../repositories/payment.repository';
 import { VNPayReturnParams, VNPayIPNParams } from '../types';
 
 // URL frontend để hiển thị kết quả thanh toán
@@ -27,6 +28,13 @@ export class WebhookController {
         queryParams.set('bankCode', result.bankCode || '');
         queryParams.set('message', result.message || '');
         queryParams.set('responseCode', result.responseCode || '');
+
+        if (result.paymentId) {
+          const payment = await paymentRepository.findByTransactionRef(result.paymentId);
+          if (payment?.bookingId) {
+            queryParams.set('bookingId', payment.bookingId);
+          }
+        }
       }
 
       // Redirect đến trang kết quả thanh toán trên frontend

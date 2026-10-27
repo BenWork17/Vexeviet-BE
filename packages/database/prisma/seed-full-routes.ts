@@ -97,34 +97,34 @@ async function main() {
 
   console.log('🚌 Found templates:', templates.length);
 
-  // Create routes for next 7 days
-  const startDate = new Date();
+  // Create ~1000 routes starting from 2026-05-05
+  const targetRoutes = 1000;
+  const startDate = new Date('2026-05-05T00:00:00');
   startDate.setHours(0, 0, 0, 0);
 
   let createdCount = 0;
   let skippedCount = 0;
+  let dayOffset = 0;
 
-  for (let dayOffset = 0; dayOffset < 7; dayOffset++) {
+  while (createdCount < targetRoutes) {
     const date = new Date(startDate);
     date.setDate(date.getDate() + dayOffset);
 
     for (const routeConfig of popularRoutes) {
-      const fromProvince = provinces.find(p => p.id === routeConfig.from);
-      const toProvince = provinces.find(p => p.id === routeConfig.to);
+      if (createdCount >= targetRoutes) break;
+
+      const fromProvince = provinces.find((p) => p.id === routeConfig.from);
+      const toProvince = provinces.find((p) => p.id === routeConfig.to);
 
       if (!fromProvince || !toProvince) continue;
 
-      // Create 2-3 trips per day for each route
       const tripsPerDay = routeConfig.busType === 'SLEEPER' ? 2 : 3;
 
       for (let tripIndex = 0; tripIndex < tripsPerDay; tripIndex++) {
-        let departureHour: number;
-        
-        if (routeConfig.busType === 'SLEEPER') {
-          departureHour = tripIndex === 0 ? 20 : 22; // Night buses
-        } else {
-          departureHour = tripIndex === 0 ? 6 : tripIndex === 1 ? 12 : 18; // Morning, noon, evening
-        }
+        if (createdCount >= targetRoutes) break;
+
+        const departureHour =
+          routeConfig.busType === 'SLEEPER' ? (tripIndex === 0 ? 20 : 22) : tripIndex === 0 ? 6 : tripIndex === 1 ? 12 : 18;
 
         const departureTime = new Date(date);
         departureTime.setHours(departureHour, 0, 0, 0);
@@ -132,20 +132,16 @@ async function main() {
         const arrivalTime = new Date(departureTime);
         arrivalTime.setMinutes(arrivalTime.getMinutes() + routeConfig.duration);
 
-        // Select template based on bus type
         let template = standardTemplate;
         if (routeConfig.busType === 'LIMOUSINE') template = limousineTemplate;
         else if (routeConfig.busType === 'SLEEPER') template = sleeperTemplate;
         else if (routeConfig.busType === 'VIP') template = vipTemplate;
 
-        const routeName = `${fromProvince.displayName} - ${toProvince.displayName} ${departureHour}:00`;
-
-        // Check if route already exists
         const existing = await prisma.route.findFirst({
           where: {
             origin: fromProvince.displayName,
             destination: toProvince.displayName,
-            departureTime: departureTime,
+            departureTime,
           },
         });
 
@@ -153,6 +149,8 @@ async function main() {
           skippedCount++;
           continue;
         }
+
+        const routeName = `${fromProvince.displayName} - ${toProvince.displayName} ${departureHour}:00`;
 
         await prisma.route.create({
           data: {
@@ -171,10 +169,20 @@ async function main() {
             price: routeConfig.price,
             amenities: ['WiFi', 'AC', 'Water', 'USB Charging'],
             pickupPoints: [
-              { id: 'p1', location: `Bến Xe ${fromProvince.displayName}`, time: departureHour + ':00', address: fromProvince.displayName },
+              {
+                id: 'p1',
+                location: `Bến Xe ${fromProvince.displayName}`,
+                time: `${departureHour}:00`,
+                address: fromProvince.displayName,
+              },
             ],
             dropoffPoints: [
-              { id: 'd1', location: `Bến Xe ${toProvince.displayName}`, time: `${Math.floor(departureHour + routeConfig.duration / 60)}:${routeConfig.duration % 60}`, address: toProvince.displayName },
+              {
+                id: 'd1',
+                location: `Bến Xe ${toProvince.displayName}`,
+                time: `${Math.floor(departureHour + routeConfig.duration / 60)}:${routeConfig.duration % 60}`,
+                address: toProvince.displayName,
+              },
             ],
             policies: {
               cancellation: 'Miễn phí hủy vé trước 24h',
@@ -189,12 +197,20 @@ async function main() {
       }
     }
 
-    console.log(`✅ Day ${dayOffset + 1}: ${date.toISOString().split('T')[0]}`);
+    if ((dayOffset + 1) % 3 === 0) {
+      console.log(`✅ Processed to day ${dayOffset + 1}: ${date.toISOString().split('T')[0]} | created=${createdCount} skipped=${skippedCount}`);
+    }
+
+    dayOffset++;
+    if (dayOffset > 120) {
+      throw new Error(`Could not reach ${targetRoutes} routes within 120 days window`);
+    }
   }
 
   console.log(`\n🎉 Seeding completed!`);
-  console.log(`✅ Created: ${createdCount} routes`);
+  console.log(`✅ Created: ${createdCount} routes (target: ${targetRoutes})`);
   console.log(`⏭️  Skipped: ${skippedCount} routes`);
+  console.log(`📅 Start date: ${startDate.toISOString().split('T')[0]}`);
 }
 
 main()

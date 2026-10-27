@@ -78,6 +78,11 @@ router.post(
   bookingController.confirm
 );
 
+router.post(
+  '/bookings/:id([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/payment-failed',
+  bookingController.markPaymentFailed
+);
+
 // =====================================================
 // SEAT ROUTES
 // =====================================================

@@ -58,6 +58,41 @@ export class PaymentController {
     }
   };
 
+  getPaymentStatusByTransactionRef = async (req: Request, res: Response): Promise<void> => {
+    try {
+      const transactionRef =
+        typeof req.query.transactionRef === 'string' ? req.query.transactionRef : undefined;
+
+      if (!transactionRef) {
+        res.status(400).json({
+          success: false,
+          error: 'transactionRef is required',
+        });
+        return;
+      }
+
+      const status = await paymentService.getPaymentStatusByTransactionRef(transactionRef);
+
+      if (!status) {
+        res.status(404).json({
+          success: false,
+          error: 'Payment not found',
+        });
+        return;
+      }
+
+      res.status(200).json({
+        success: true,
+        data: status,
+      });
+    } catch (error) {
+      res.status(400).json({
+        success: false,
+        error: error instanceof Error ? error.message : 'Failed to get payment status',
+      });
+    }
+  };
+
   getPaymentsByBooking = async (req: Request, res: Response): Promise<void> => {
     try {
       const { bookingId } = req.params;

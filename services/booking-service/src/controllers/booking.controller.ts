@@ -164,4 +164,22 @@ export class BookingController {
       next(error);
     }
   };
+
+  markPaymentFailed = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const { id } = req.params;
+      const bookingId = Array.isArray(id) ? id[0] : id;
+      const reason = typeof req.body?.reason === 'string' ? req.body.reason : undefined;
+
+      const booking = await this.bookingService.markPaymentFailed(bookingId, reason);
+
+      res.status(200).json({
+        success: true,
+        data: booking,
+        message: 'Booking marked as payment failed',
+      });
+    } catch (error) {
+      next(error);
+    }
+  };
 }

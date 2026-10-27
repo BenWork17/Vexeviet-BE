@@ -6,9 +6,11 @@ const router: IRouter = Router();
 
 router.post('/', validateCreatePayment, paymentController.createPayment);
 
-router.get('/:paymentId', paymentController.getPayment);
+router.get('/status', paymentController.getPaymentStatusByTransactionRef);
 
 router.get('/booking/:bookingId', paymentController.getPaymentsByBooking);
+
+router.get('/:paymentId', paymentController.getPayment);
 
 router.post('/:paymentId/cancel', paymentController.cancelPayment);
 

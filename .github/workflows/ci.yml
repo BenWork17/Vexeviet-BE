@@ -1,0 +1,162 @@
+# =============================================================================
+# CI/CD Pipeline - Vet qua GitHub Actions
+# Muc tieu: build/test + BAO MAT (secrets scan, image scan, khong push khi fail)
+# =============================================================================
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# Quyen mac dinh toi thieu - chi doc repo (principle of least privilege)
+permissions:
+  contents: read
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # 1. Code quality: lint, type-check, unit test
+  # ---------------------------------------------------------------------------
+  quality:
+    name: Lint / Type-check / Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 8
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 18
+          cache: pnpm
+
+      - name: Install dependencies (tu lockfile)
+        run: pnpm install --frozen-lockfile
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Type-check
+        run: pnpm type-check
+
+      - name: Unit test
+        run: pnpm test
+
+  # ---------------------------------------------------------------------------
+  # 2. Security scans: secrets + Dockerfile lint + image vulnerability
+  # ---------------------------------------------------------------------------
+  security:
+    name: Security scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # gitleaks can toan bo lich su
+
+      # Secrets scanning: khong commit API key/password/token
+      - name: Gitleaks - scan secrets
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITLEAKS_ENABLE_UPLOAD_ARTIFACT: "true"
+
+      # Lint Dockerfile: bat loi best-practice & security truoc khi build
+      - name: Hadolint - lint Dockerfiles
+        uses: hadolint/hadolint-action@v3.1.0
+        with:
+          dockerfile: |
+            services/user-service/Dockerfile
+            services/payment-service/Dockerfile
+          ignore: DL3016,DL3018,DL3059
+
+      # Build image (khong push) de scan
+      - name: Build user-service image (no push)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: services/user-service/Dockerfile
+          push: false
+          load: true
+          tags: vexeviet/user-service:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # Quet lo hong CVE tren image (OS package + dependency)
+      - name: Trivy - scan image (CRITICAL/HIGH)
+        uses: aquasecurity/trivy-action@0.24.0
+        with:
+          image-ref: vexeviet/user-service:ci
+          format: table
+          exit-code: "1" # fail pipeline neu co lo hong nghiem trong
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+
+      # Quet dependency truc tiep tren repo
+      - name: Trivy - scan filesystem
+        uses: aquasecurity/trivy-action@0.24.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          format: table
+          exit-code: "1"
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          skip-dirs: node_modules,tests
+
+  # ---------------------------------------------------------------------------
+  # 3. Publish image len registry (chi khi push vao main, qua cac job tren)
+  #    - Dung GITHUB_TOKEN (token ngan han, tu dong rot) - KHONG luu key co dinh
+  #    - Neu deploy len K8s/cloud: dung OIDC (id-token) thay cho secret key
+  # ---------------------------------------------------------------------------
+  publish:
+    name: Publish image
+    runs-on: ubuntu-latest
+    needs: [quality, security]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    permissions:
+      contents: read
+      packages: write # quyen push len GitHub Container Registry
+      id-token: write # quyen xin OIDC token (dung cho deploy khong can long-lived key)
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build & push user-service
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: services/user-service/Dockerfile
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository }}/user-service:${{ github.sha }}
+            ghcr.io/${{ github.repository }}/user-service:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Build & push payment-service
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: services/payment-service/Dockerfile
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository }}/payment-service:${{ github.sha }}
+            ghcr.io/${{ github.repository }}/payment-service:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # Vi du deploy bang OIDC (khong can secret key luu trong repo):
+      # - Nhan gan AWS IAM Role / K8s Service Account qua id-token
+      #   `aws ecr get-login-password` hoac `kubectl set image` bang token ngan han
+      # - Chi can 2 quyen o tren: id-token: write

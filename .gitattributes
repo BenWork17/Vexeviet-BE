@@ -1,0 +1,5 @@
+# Dong LF cho script - tranh loi shebang #!/bin/sh\r khi checkout tren Windows
+*.sh text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+Dockerfile text eol=lf

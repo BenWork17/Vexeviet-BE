@@ -102,6 +102,16 @@ export interface PaymentDTO {
   createdAt: Date;
 }
 
+export interface PaymentStatusResponse {
+  paymentId: string;
+  bookingId: string;
+  transactionRef: string;
+  status: PaymentStatus;
+  isFinal: boolean;
+  paidAt: Date | null;
+  expiredAt: Date | null;
+}
+
 export interface TransactionDTO {
   id: string;
   paymentId: string;

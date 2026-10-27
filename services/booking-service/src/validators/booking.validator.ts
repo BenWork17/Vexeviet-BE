@@ -2,7 +2,7 @@ import { z } from 'zod';
 import { Request, Response, NextFunction } from 'express';
 
 // Passenger schema
-const passengerSchema = z.object({
+const _passengerSchema = z.object({
   firstName: z.string().min(1).max(50),
   lastName: z.string().min(1).max(50),
   seatNumber: z.string().min(2).max(10),
@@ -11,13 +11,13 @@ const passengerSchema = z.object({
 });
 
 // Contact info schema
-const contactInfoSchema = z.object({
+const _contactInfoSchema = z.object({
   email: z.string().email(),
   phone: z.string().min(10).max(20),
 });
 
 // Addons schema
-const addonsSchema = z.object({
+const _addonsSchema = z.object({
   insurance: z.boolean().optional(),
   meal: z.boolean().optional(),
   extraLuggage: z.boolean().optional(),

@@ -15,6 +15,7 @@ import {
   buildVNPayQueryString,
 } from '../utils/signature';
 import { paymentRepository } from '../repositories/payment.repository';
+import { bookingSyncService } from './booking-sync.service';
 
 export class VNPayService {
   createPaymentUrl(
@@ -177,8 +178,28 @@ export class VNPayService {
       });
     });
 
+    if (payment.bookingId) {
+      try {
+        await bookingSyncService.syncBookingStatusAfterPayment(
+          payment.bookingId,
+          newStatus,
+          VNPAY_RESPONSE_CODES[responseCode] || 'Payment failed'
+        );
+      } catch (error) {
+        console.error('Booking sync failed after VNPay IPN:', {
+          paymentId: payment.id,
+          bookingId: payment.bookingId,
+          newStatus,
+          error,
+        });
+        return { rspCode: '99', message: 'Booking sync failed' };
+      }
+    }
+
     if (newStatus === PaymentStatus.COMPLETED) {
       console.log(`✅ Payment ${payment.id} completed successfully`);
+    } else {
+      console.log(`⚠️ Payment ${payment.id} failed/cancelled with status ${newStatus}`);
     }
 
     return { rspCode: '00', message: 'Confirm Success' };

@@ -1,15 +1,19 @@
 import Redis from 'ioredis';
 
 const REDIS_URL = process.env.REDIS_URL || 'redis://localhost:6379';
+const RECONNECT_COOLDOWN_MS = 5000;
 
 class RedisClient {
   private client: Redis | null = null;
   private isConnected = false;
+  private connectPromise: Promise<void> | null = null;
+  private nextReconnectAt = 0;
 
   getClient(): Redis {
     if (!this.client) {
       this.client = new Redis(REDIS_URL, {
-        maxRetriesPerRequest: 3,
+        enableOfflineQueue: false,
+        maxRetriesPerRequest: 1,
         retryStrategy(times: number): number {
           const delay = Math.min(times * 50, 2000);
           return delay;
@@ -38,9 +42,33 @@ class RedisClient {
 
   async connect(): Promise<void> {
     const client = this.getClient();
-    if (!this.isConnected) {
-      await client.connect();
+
+    if (this.isConnected || client.status === 'ready') {
+      this.isConnected = true;
+      return;
     }
+
+    if (Date.now() < this.nextReconnectAt) {
+      return;
+    }
+
+    if (!this.connectPromise) {
+      this.connectPromise = client
+        .connect()
+        .then(() => {
+          this.isConnected = true;
+        })
+        .catch((error: Error) => {
+          this.isConnected = false;
+          this.nextReconnectAt = Date.now() + RECONNECT_COOLDOWN_MS;
+          console.error('Redis connect error:', error.message);
+        })
+        .finally(() => {
+          this.connectPromise = null;
+        });
+    }
+
+    await this.connectPromise;
   }
 
   async disconnect(): Promise<void> {
@@ -52,7 +80,7 @@ class RedisClient {
   }
 
   isReady(): boolean {
-    return this.isConnected;
+    return this.isConnected && this.client?.status === 'ready';
   }
 }
 

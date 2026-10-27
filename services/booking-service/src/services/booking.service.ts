@@ -305,7 +305,7 @@ export class BookingService {
     );
 
     // Release seats
-    await this.seatRepo.releaseSeats(bookingId);
+    await this.seatRepo.releaseSeatsByBookingId(bookingId);
 
     return this.formatBookingDetailResponse(updatedBooking);
   }
@@ -328,15 +328,34 @@ export class BookingService {
       throw new BookingExpiredError(booking.bookingCode);
     }
 
-    // Update booking status
     const updatedBooking = await this.bookingRepo.updateStatus(
       bookingId,
       BookingStatus.CONFIRMED,
       { confirmedAt: new Date() }
     );
 
-    // Confirm seats
     await this.seatRepo.confirmSeatsByBookingId(bookingId);
+
+    return this.formatBookingDetailResponse(updatedBooking);
+  }
+
+  async markPaymentFailed(bookingId: string, reason?: string): Promise<BookingDetailResponse> {
+    const booking = await this.bookingRepo.findById(bookingId);
+
+    if (!booking) {
+      throw new NotFoundError('Booking', bookingId);
+    }
+
+    if (booking.status === BookingStatus.CONFIRMED || booking.status === BookingStatus.COMPLETED) {
+      throw new ConflictError(`Cannot mark payment failed for booking with status: ${booking.status}`);
+    }
+
+    const updatedBooking = await this.bookingRepo.updateStatus(bookingId, BookingStatus.CANCELLED, {
+      cancelledAt: new Date(),
+      cancellationReason: reason || 'Payment failed',
+    });
+
+    await this.seatRepo.releaseSeatsByBookingId(bookingId);
 
     return this.formatBookingDetailResponse(updatedBooking);
   }

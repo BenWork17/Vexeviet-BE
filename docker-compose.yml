@@ -6,6 +6,9 @@ services:
     environment:
       MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-root}
       MYSQL_DATABASE: ${MYSQL_DATABASE:-vexeviet}
+      # Tao user DB khong-privileged cho app (khong dung root de connect)
+      MYSQL_USER: ${MYSQL_USER:-vexeviet_user}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-securepassword}
     ports:
       - "3306:3306"
     volumes:
@@ -54,6 +57,87 @@ services:
       timeout: 5s
       retries: 5
 
+  # ---------------------------------------------------------------------------
+  # Application services (build tu Dockerfile)
+  # ---------------------------------------------------------------------------
+  user-service:
+    build:
+      context: .
+      dockerfile: services/user-service/Dockerfile
+    image: vexeviet/user-service:latest
+    container_name: vexeviet-user-service
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      USER_SERVICE_PORT: "3001"
+      DATABASE_URL: mysql://${MYSQL_USER:-vexeviet_user}:${MYSQL_PASSWORD:-securepassword}@mysql:3306/${MYSQL_DATABASE:-vexeviet}
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+      JWT_SECRET: ${JWT_SECRET:-CHANGE_ME_MIN_32_CHARS_IN_PRODUCTION}
+      # docker-entrypoint.sh
+      WAIT_FOR_DB: "true"
+      WAIT_FOR_REDIS: "true"
+      WAIT_FOR_DB_TIMEOUT: "120"
+      RUN_MIGRATIONS: "false"
+    ports:
+      - "3001:3001"
+    volumes:
+      - user_service_logs:/app/logs
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - vexeviet-network
+    # --- Security (xem docs/DOCKER-ASSIGNMENT.md) ---
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+
+  payment-service:
+    build:
+      context: .
+      dockerfile: services/payment-service/Dockerfile
+    image: vexeviet/payment-service:latest
+    container_name: vexeviet-payment-service
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      PAYMENT_SERVICE_PORT: "3003"
+      DATABASE_URL: mysql://${MYSQL_USER:-vexeviet_user}:${MYSQL_PASSWORD:-securepassword}@mysql:3306/${MYSQL_DATABASE:-vexeviet}
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+      BOOKING_SERVICE_URL: ${BOOKING_SERVICE_URL:-http://booking-service:3004/api/v1}
+      # VNPay sandbox (khong commit secret that su - doc .env)
+      VNPAY_TMN_CODE: ${VNPAY_TMN_CODE:-}
+      VNPAY_HASH_SECRET: ${VNPAY_HASH_SECRET:-}
+      VNPAY_URL: ${VNPAY_URL:-https://sandbox.vnpayment.vn/paymentv2/vpcpay.html}
+      VNPAY_RETURN_URL: ${VNPAY_RETURN_URL:-http://localhost:3000/payment/result}
+      VNPAY_API_URL: ${VNPAY_API_URL:-https://sandbox.vnpayment.vn/merchant_webapi/api/transaction}
+      # docker-entrypoint.sh
+      WAIT_FOR_DB: "true"
+      WAIT_FOR_REDIS: "true"
+      WAIT_FOR_DB_TIMEOUT: "120"
+      RUN_MIGRATIONS: "false"
+    ports:
+      - "3003:3003"
+    volumes:
+      - payment_service_logs:/app/logs
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - vexeviet-network
+    # --- Security (xem docs/DOCKER-ASSIGNMENT.md) ---
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+
   ngrok:
     image: ngrok/ngrok:latest
     container_name: vexeviet-ngrok
@@ -74,6 +158,8 @@ volumes:
   mysql_data:
   redis_data:
   rabbitmq_data:
+  user_service_logs:
+  payment_service_logs:
 
 networks:
   vexeviet-network:

@@ -1,5 +1,5 @@
 import { SeatRepository } from '../repositories/seat.repository';
-import { prisma, SeatStatus, RouteStatus } from '@vexeviet/database';
+import { prisma, SeatStatus } from '@vexeviet/database';
 import {
   SeatAvailabilityRequest,
   SeatAvailabilityResponse,
@@ -81,7 +81,7 @@ export class SeatService {
         basePrice: Number(route.price),
         priceModifier: Number(tSeat.priceModifier),
         finalPrice: Number(route.price) + Number(tSeat.priceModifier),
-        status: SeatStatus.AVAILABLE as any,
+        status: SeatStatus.AVAILABLE,
         isSelectable: true,
         metadata: tSeat.metadata,
       };
@@ -94,8 +94,10 @@ export class SeatService {
           bookingRecord.status === SeatStatus.HELD &&
           bookingRecord.lockedUntil > new Date();
 
-        seatInfo.status = isHeldAndValid ? SeatStatus.HELD : bookingRecord.status;
-        seatInfo.isSelectable = false;
+        if (bookingRecord.status === SeatStatus.BOOKED || isHeldAndValid) {
+          seatInfo.status = bookingRecord.status === SeatStatus.BOOKED ? SeatStatus.BOOKED : SeatStatus.HELD;
+          seatInfo.isSelectable = false;
+        }
       }
 
       seats.push(seatInfo);

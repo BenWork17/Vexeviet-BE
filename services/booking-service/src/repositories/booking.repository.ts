@@ -1,4 +1,4 @@
-import { prisma, Prisma, Booking, BookingStatus, SeatStatus } from '@vexeviet/database';
+import { prisma, Prisma, Booking, BookingStatus } from '@vexeviet/database';
 
 export class BookingRepository {
   /**

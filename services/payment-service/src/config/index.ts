@@ -3,14 +3,19 @@ import { VNPayConfig } from '../types';
 export const paymentConfig = {
   port: parseInt(process.env.PAYMENT_SERVICE_PORT || '3003', 10),
   nodeEnv: process.env.NODE_ENV || 'development',
-  
+
   paymentExpireMinutes: 15,
-  
+
+  bookingService: {
+    baseUrl: process.env.BOOKING_SERVICE_URL || 'http://localhost:3002/api/v1',
+    internalApiKey: process.env.BOOKING_SERVICE_INTERNAL_API_KEY || '',
+  },
+
   redis: {
     host: process.env.REDIS_HOST || 'localhost',
     port: parseInt(process.env.REDIS_PORT || '6379', 10),
   },
-  
+
   idempotency: {
     ttlSeconds: 24 * 60 * 60,
   },

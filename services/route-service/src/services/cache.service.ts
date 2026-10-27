@@ -1,5 +1,5 @@
 import crypto from 'crypto';
-import { redis } from '../config/redis';
+import { redis, redisClient } from '../config/redis';
 
 const DEFAULT_TTL = 300; // 5 minutes
 
@@ -34,6 +34,11 @@ export class CacheService {
 
   async get<T>(key: string): Promise<T | null> {
     try {
+      await redisClient.connect();
+      if (!redisClient.isReady()) {
+        return null;
+      }
+
       const fullKey = this.getKey(key);
       const data = await redis.get(fullKey);
       if (!data) return null;
@@ -46,6 +51,11 @@ export class CacheService {
 
   async set<T>(key: string, value: T, ttl: number = DEFAULT_TTL): Promise<void> {
     try {
+      await redisClient.connect();
+      if (!redisClient.isReady()) {
+        return;
+      }
+
       const fullKey = this.getKey(key);
       await redis.set(fullKey, JSON.stringify(value), 'EX', ttl);
     } catch (error) {
@@ -55,6 +65,11 @@ export class CacheService {
 
   async delete(key: string): Promise<void> {
     try {
+      await redisClient.connect();
+      if (!redisClient.isReady()) {
+        return;
+      }
+
       const fullKey = this.getKey(key);
       await redis.del(fullKey);
     } catch (error) {
@@ -64,6 +79,11 @@ export class CacheService {
 
   async deletePattern(pattern: string): Promise<void> {
     try {
+      await redisClient.connect();
+      if (!redisClient.isReady()) {
+        return;
+      }
+
       const fullPattern = this.getKey(pattern);
       const keys = await redis.keys(fullPattern);
       if (keys.length > 0) {

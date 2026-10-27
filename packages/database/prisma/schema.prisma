@@ -5,6 +5,8 @@ datasource db {
 
 generator client {
   provider = "prisma-client-js"
+  // Alpine 3.19+ chi co libssl.so.3 -> can engine openssl-3 (dung cho Docker/K8s)
+  binaryTargets = ["native", "linux-musl-openssl-3.0.x"]
 }
 
 model User {

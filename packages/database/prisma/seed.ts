@@ -360,7 +360,7 @@ const popularRoutes: RouteConfig[] = [
 // HELPER FUNCTIONS
 // =====================================================
 
-function getProvinceById(id: string) {
+function getProvinceById(id: string): (typeof provinces)[number] | undefined {
   return provinces.find((p) => p.id === id);
 }
 
@@ -436,7 +436,7 @@ function generateSeats(
 // MAIN SEED FUNCTION
 // =====================================================
 
-async function main() {
+async function main(): Promise<void> {
   console.log('╔════════════════════════════════════════════╗');
   console.log('║     VeXeViet Database Seed Script          ║');
   console.log('╚════════════════════════════════════════════╝\n');
@@ -457,30 +457,48 @@ async function main() {
 
   // === STEP 2: CREATE USERS ===
   console.log('👤 Step 2: Creating users...');
-  const passwordHash = await bcrypt.hash('Password@123', 12);
+  const defaultPasswordHash = await bcrypt.hash('Password@123', 12);
+
+  const adminEmail = process.env.ADMIN_EMAIL;
+  const adminPassword = process.env.ADMIN_PASSWORD;
+  const adminFirstName = process.env.ADMIN_FIRST_NAME || 'System';
+  const adminLastName = process.env.ADMIN_LAST_NAME || 'Admin';
+
+  if (!adminEmail || !adminPassword) {
+    throw new Error('ADMIN_EMAIL and ADMIN_PASSWORD are required in .env for seeding admin account');
+  }
+
+  const adminPasswordHash = await bcrypt.hash(adminPassword, 12);
 
   const admin = await prisma.user.upsert({
-    where: { email: 'admin@vexeviet.com' },
-    update: { password: passwordHash },
+    where: { email: adminEmail },
+    update: {
+      password: adminPasswordHash,
+      firstName: adminFirstName,
+      lastName: adminLastName,
+      role: UserRole.ADMIN,
+      status: UserStatus.ACTIVE,
+      isEmailVerified: true,
+    },
     create: {
-      email: 'admin@vexeviet.com',
-      password: passwordHash,
-      firstName: 'Admin',
-      lastName: 'VeXeViet',
+      email: adminEmail,
+      password: adminPasswordHash,
+      firstName: adminFirstName,
+      lastName: adminLastName,
       phone: '0900000001',
       role: UserRole.ADMIN,
       status: UserStatus.ACTIVE,
       isEmailVerified: true,
     },
   });
-  console.log(`   ✅ Admin: ${admin.email}`);
+  console.log(`   ✅ Admin (from env): ${admin.email}`);
 
   const operator1 = await prisma.user.upsert({
     where: { email: 'thanhbuoi@vexeviet.com' },
-    update: { password: passwordHash },
+    update: { password: defaultPasswordHash },
     create: {
       email: 'thanhbuoi@vexeviet.com',
-      password: passwordHash,
+      password: defaultPasswordHash,
       firstName: 'Thành',
       lastName: 'Bưởi',
       phone: '0900000002',
@@ -493,10 +511,10 @@ async function main() {
 
   const operator2 = await prisma.user.upsert({
     where: { email: 'phuongtrang@vexeviet.com' },
-    update: { password: passwordHash },
+    update: { password: defaultPasswordHash },
     create: {
       email: 'phuongtrang@vexeviet.com',
-      password: passwordHash,
+      password: defaultPasswordHash,
       firstName: 'Phương',
       lastName: 'Trang',
       phone: '0900000003',
@@ -509,10 +527,10 @@ async function main() {
 
   const customer = await prisma.user.upsert({
     where: { email: 'customer@vexeviet.com' },
-    update: { password: passwordHash },
+    update: { password: defaultPasswordHash },
     create: {
       email: 'customer@vexeviet.com',
-      password: passwordHash,
+      password: defaultPasswordHash,
       firstName: 'Nguyễn',
       lastName: 'An',
       phone: '0900000004',
@@ -525,7 +543,12 @@ async function main() {
 
   // === STEP 3: CREATE BUS TEMPLATES ===
   console.log('🚌 Step 3: Creating bus templates...');
-  const createdTemplates: Record<string, { id: string; totalSeats: number; busType: BusType }> = {};
+  const createdTemplatesByType: Record<BusType, { id: string; totalSeats: number; busType: BusType }[]> = {
+    [BusType.SLEEPER]: [],
+    [BusType.LIMOUSINE]: [],
+    [BusType.VIP]: [],
+    [BusType.STANDARD]: [],
+  };
 
   for (const template of busTemplates) {
     const created = await prisma.busTemplate.create({
@@ -545,7 +568,11 @@ async function main() {
     const seats = generateSeats(created.id, template.seatLayout, template.floors);
     await prisma.seat.createMany({ data: seats });
 
-    createdTemplates[template.busType] = { id: created.id, totalSeats: template.totalSeats, busType: template.busType };
+    createdTemplatesByType[template.busType].push({
+      id: created.id,
+      totalSeats: template.totalSeats,
+      busType: template.busType,
+    });
     console.log(`   ✅ ${template.name}: ${template.totalSeats} seats created`);
   }
   console.log('');
@@ -554,51 +581,42 @@ async function main() {
   console.log('🚐 Step 4: Creating buses...');
   const buses: { id: string; licensePlate: string; operatorId: string; busTemplateId: string }[] = [];
 
-  // Buses cho Thành Bưởi
-  const busesData1 = [
-    { plate: '51B-001.01', templateType: BusType.SLEEPER },
-    { plate: '51B-001.02', templateType: BusType.SLEEPER },
-    { plate: '51B-001.03', templateType: BusType.LIMOUSINE },
-    { plate: '51B-001.04', templateType: BusType.LIMOUSINE },
-    { plate: '51B-001.05', templateType: BusType.VIP },
+  const pickTemplate = (type: BusType, seed: number) => {
+    const templates = createdTemplatesByType[type];
+    if (!templates.length) throw new Error(`No template found for bus type: ${type}`);
+    return templates[seed % templates.length];
+  };
+
+  const busTypePool: BusType[] = [
+    BusType.SLEEPER,
+    BusType.SLEEPER,
+    BusType.LIMOUSINE,
+    BusType.LIMOUSINE,
+    BusType.VIP,
+    BusType.STANDARD,
   ];
 
-  for (const busData of busesData1) {
-    const template = createdTemplates[busData.templateType];
-    const bus = await prisma.bus.create({
-      data: {
-        licensePlate: busData.plate,
-        operatorId: operator1.id,
-        busTemplateId: template.id,
-        status: BusStatus.ACTIVE,
-      },
-    });
-    buses.push({ id: bus.id, licensePlate: bus.licensePlate, operatorId: operator1.id, busTemplateId: template.id });
-  }
-  console.log(`   ✅ Thành Bưởi: ${busesData1.length} buses`);
+  const createBusesForOperator = async (prefix: string, operatorId: string, count: number) => {
+    for (let i = 1; i <= count; i++) {
+      const busType = busTypePool[(i - 1) % busTypePool.length];
+      const template = pickTemplate(busType, i + operatorId.length);
+      const bus = await prisma.bus.create({
+        data: {
+          licensePlate: `${prefix}.${String(i).padStart(2, '0')}`,
+          operatorId,
+          busTemplateId: template.id,
+          status: BusStatus.ACTIVE,
+        },
+      });
+      buses.push({ id: bus.id, licensePlate: bus.licensePlate, operatorId, busTemplateId: template.id });
+    }
+  };
 
-  // Buses cho Phương Trang
-  const busesData2 = [
-    { plate: '51B-002.01', templateType: BusType.SLEEPER },
-    { plate: '51B-002.02', templateType: BusType.SLEEPER },
-    { plate: '51B-002.03', templateType: BusType.LIMOUSINE },
-    { plate: '51B-002.04', templateType: BusType.STANDARD },
-    { plate: '51B-002.05', templateType: BusType.VIP },
-  ];
+  await createBusesForOperator('51B-001', operator1.id, 12);
+  console.log('   ✅ Thành Bưởi: 12 buses');
 
-  for (const busData of busesData2) {
-    const template = createdTemplates[busData.templateType];
-    const bus = await prisma.bus.create({
-      data: {
-        licensePlate: busData.plate,
-        operatorId: operator2.id,
-        busTemplateId: template.id,
-        status: BusStatus.ACTIVE,
-      },
-    });
-    buses.push({ id: bus.id, licensePlate: bus.licensePlate, operatorId: operator2.id, busTemplateId: template.id });
-  }
-  console.log(`   ✅ Phương Trang: ${busesData2.length} buses\n`);
+  await createBusesForOperator('51B-002', operator2.id, 12);
+  console.log('   ✅ Phương Trang: 12 buses\n');
 
   // === STEP 5: CREATE ROUTES ===
   console.log('🛤️  Step 5: Creating routes...');
@@ -632,7 +650,8 @@ async function main() {
         arrivalTime.setMinutes(arrivalTime.getMinutes() + routeConfig.duration);
 
         // Chọn bus và template phù hợp
-        const template = createdTemplates[routeConfig.busType];
+        const templates = createdTemplatesByType[routeConfig.busType];
+        const template = templates[routeCount % templates.length];
         const operatorId = routeCount % 2 === 0 ? operator1.id : operator2.id;
         const matchingBuses = buses.filter(
           (b) => b.operatorId === operatorId && b.busTemplateId === template.id
@@ -789,8 +808,8 @@ async function main() {
   console.log(`   • Routes: ${totalRoutes}`);
   console.log(`   • Bookings: ${bookingCount}`);
   console.log('');
-  console.log('🔐 Test Accounts (Password: Password@123):');
-  console.log('   • Admin: admin@vexeviet.com');
+  console.log('🔐 Test Accounts:');
+  console.log(`   • Admin (from env): ${adminEmail}`);
   console.log('   • Operator 1: thanhbuoi@vexeviet.com');
   console.log('   • Operator 2: phuongtrang@vexeviet.com');
   console.log('   • Customer: customer@vexeviet.com');
