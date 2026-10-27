@@ -1,4 +1,11 @@
-import { Route as PrismaRoute, BusType, RouteStatus, UserRole, Decimal } from '@vexeviet/database';
+import {
+  Route as PrismaRoute,
+  BusType,
+  RouteStatus,
+  UserRole,
+  UserStatus,
+  Decimal,
+} from '@vexeviet/database';
 
 export type Route = PrismaRoute;
 
@@ -68,6 +75,46 @@ export interface RouteQuery {
   sortOrder?: 'asc' | 'desc';
 }
 
+/** Query accepted by `GET /routes/admin/all` (contract Shape 3). */
+export interface AdminRouteQuery {
+  status?: RouteStatus;
+  operatorId?: string;
+  q?: string;
+  page?: number;
+  limit?: number;
+  includeDeleted?: boolean;
+}
+
+/** Contract Shape 3 — AdminRoute. `totalSeats`/`availableSeats` are `null` when seat data is unknown. */
+export interface AdminRoute {
+  id: string;
+  operatorId: string;
+  operatorName: string;
+  name: string;
+  origin: string;
+  destination: string;
+  departureTime: Date;
+  busType: BusType;
+  totalSeats: number | null;
+  availableSeats: number | null;
+  price: number;
+  status: RouteStatus;
+  seatDataAvailable: boolean;
+}
+
+/** Contract Shape 3 — AdminOperator, derived from `User` where `role=OPERATOR`. */
+export interface AdminOperator {
+  id: string;
+  name: string;
+  contactEmail: string;
+  activeRoutes: number;
+  monthlyBookings: number;
+  /** Always `null`: no rating data exists in the schema (documented gap). */
+  rating: null;
+  status: UserStatus;
+  createdAt: Date;
+}
+
 export interface PaginatedResponse<T> {
   data: T[];
   pagination: {
@@ -106,4 +153,4 @@ export interface RouteResponse {
   updatedAt: Date;
 }
 
-export { BusType, RouteStatus, UserRole };
+export { BusType, RouteStatus, UserRole, UserStatus };

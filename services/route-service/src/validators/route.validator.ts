@@ -1,5 +1,5 @@
 import { Request, Response, NextFunction } from 'express';
-import { BusType } from '../types';
+import { BusType, RouteStatus } from '../types';
 
 interface CreateRouteBody {
   name: string;
@@ -101,6 +101,75 @@ export const validateUpdateRoute = (req: Request, res: Response, next: NextFunct
   }
   if (body.busType && !Object.values(BusType).includes(body.busType)) {
     errors.push(`Bus type must be one of: ${Object.values(BusType).join(', ')}`);
+  }
+
+  if (errors.length > 0) {
+    res.status(400).json({
+      success: false,
+      error: 'Validation failed',
+      details: errors,
+    });
+    return;
+  }
+
+  next();
+};
+
+/**
+ * Query validation for `GET /routes/admin/all` (contract Shape 3).
+ * Bad enum values are a 400 naming the offending field; `limit`/`page` are
+ * clamped downstream so an out-of-range number is not an error.
+ */
+export const validateAdminRouteQuery = (
+  req: Request,
+  res: Response,
+  next: NextFunction
+): void => {
+  const errors: string[] = [];
+  const { status, includeDeleted, operatorId, q } = req.query;
+
+  if (status !== undefined && !Object.values(RouteStatus).includes(status as RouteStatus)) {
+    errors.push(`status must be one of: ${Object.values(RouteStatus).join(', ')}`);
+  }
+  if (
+    includeDeleted !== undefined &&
+    typeof includeDeleted === 'string' &&
+    !['true', 'false'].includes(includeDeleted)
+  ) {
+    errors.push('includeDeleted must be true or false');
+  }
+  if (operatorId !== undefined && typeof operatorId !== 'string') {
+    errors.push('operatorId must be a string');
+  }
+  if (q !== undefined && typeof q !== 'string') {
+    errors.push('q must be a string');
+  }
+
+  if (errors.length > 0) {
+    res.status(400).json({
+      success: false,
+      error: 'Validation failed',
+      details: errors,
+    });
+    return;
+  }
+
+  next();
+};
+
+/**
+ * Query validation for `GET /routes/admin/operators` (contract Shape 3).
+ */
+export const validateAdminOperatorQuery = (
+  req: Request,
+  res: Response,
+  next: NextFunction
+): void => {
+  const errors: string[] = [];
+  const { q } = req.query;
+
+  if (q !== undefined && typeof q !== 'string') {
+    errors.push('q must be a string');
   }
 
   if (errors.length > 0) {

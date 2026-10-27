@@ -4,6 +4,7 @@ import {
   CreateRouteRequest,
   UpdateRouteRequest,
   RouteQuery,
+  AdminRouteQuery,
   TokenPayload,
   BusType,
   RouteStatus,
@@ -106,7 +107,9 @@ export class RouteController {
 
       const { id } = req.params;
       const data = req.body as UpdateRouteRequest;
-      const route = await this.routeService.update(id, req.user.userId, data);
+      // The full token is passed so the service can authorize an ADMIN acting
+      // on a route it does not own (docs/API-TESTING.md Scenario 4).
+      const route = await this.routeService.update(id, req.user, data);
 
       res.status(200).json({
         success: true,
@@ -131,7 +134,7 @@ export class RouteController {
       }
 
       const { id } = req.params;
-      await this.routeService.delete(id, req.user.userId);
+      await this.routeService.delete(id, req.user);
 
       res.status(200).json({
         success: true,
@@ -168,6 +171,53 @@ export class RouteController {
       res.status(500).json({
         success: false,
         error: error instanceof Error ? error.message : 'Failed to fetch routes',
+      });
+    }
+  };
+
+  /** `GET /routes/admin/all` — ADMIN only (enforced by `adminMiddleware` at the router). */
+  findAdminRoutes = async (req: Request, res: Response): Promise<void> => {
+    try {
+      const query: AdminRouteQuery = {
+        status: req.query.status as RouteStatus | undefined,
+        operatorId: req.query.operatorId as string | undefined,
+        q: req.query.q as string | undefined,
+        page: req.query.page ? Number(req.query.page) : 1,
+        limit: req.query.limit ? Number(req.query.limit) : 20,
+        includeDeleted: req.query.includeDeleted === 'true',
+      };
+
+      const result = await this.routeService.findAdminRoutes(query);
+
+      res.status(200).json({
+        success: true,
+        ...result,
+      });
+    } catch (error) {
+      res.status(500).json({
+        success: false,
+        error: error instanceof Error ? error.message : 'Failed to fetch admin routes',
+      });
+    }
+  };
+
+  /** `GET /routes/admin/operators` — ADMIN only (enforced by `adminMiddleware` at the router). */
+  findAdminOperators = async (req: Request, res: Response): Promise<void> => {
+    try {
+      const result = await this.routeService.findAdminOperators({
+        q: req.query.q as string | undefined,
+        page: req.query.page ? Number(req.query.page) : 1,
+        limit: req.query.limit ? Number(req.query.limit) : 20,
+      });
+
+      res.status(200).json({
+        success: true,
+        ...result,
+      });
+    } catch (error) {
+      res.status(500).json({
+        success: false,
+        error: error instanceof Error ? error.message : 'Failed to fetch operators',
       });
     }
   };
