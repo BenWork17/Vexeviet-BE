@@ -108,9 +108,24 @@ export const adminPaymentSummaryQuerySchema = z.object({
     .default(7),
 });
 
+/**
+ * `POST /admin/:paymentId/resync` body. Entirely optional — an admin retry is
+ * self-explanatory, so an absent body is valid (the controller treats it as `{}`).
+ */
+export const resyncBookingSchema = z.object({
+  reason: z.string().trim().max(500, 'reason must be at most 500 characters').optional(),
+});
+
+/** Same `paginationFields` convention as every other admin list. */
+export const adminPaymentReconciliationQuerySchema = z.object({
+  ...paginationFields,
+});
+
 /** Post-parse query shapes, so controllers do not re-declare them. */
 export type AdminPaymentListQuery = z.infer<typeof adminPaymentListQuerySchema>;
 export type AdminPaymentSummaryQuery = z.infer<typeof adminPaymentSummaryQuerySchema>;
+export type AdminPaymentReconciliationQuery = z.infer<typeof adminPaymentReconciliationQuerySchema>;
+export type ResyncBookingBody = z.infer<typeof resyncBookingSchema>;
 
 type QuerySchemaResult<T> = { ok: true; data: T } | { ok: false; error: z.ZodError };
 
@@ -204,4 +219,43 @@ export const validateRefund = (
     }
     next(error);
   }
+};
+
+export const validateResyncBooking = (
+  req: Request,
+  res: Response,
+  next: NextFunction
+): void => {
+  try {
+    // An absent body is valid: the admin retry carries no required input.
+    req.body = resyncBookingSchema.parse(req.body ?? {});
+    next();
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      res.status(400).json({
+        success: false,
+        error: 'Validation failed',
+        details: error.errors.map((e) => ({
+          field: e.path.join('.'),
+          message: e.message,
+        })),
+      });
+      return;
+    }
+    next(error);
+  }
+};
+
+export const validateAdminPaymentReconciliation = (
+  req: Request,
+  res: Response,
+  next: NextFunction
+): void => {
+  const result = parseQuery(adminPaymentReconciliationQuerySchema, req.query);
+  if (!result.ok) {
+    sendQueryError(res, result.error);
+    return;
+  }
+  req.query = result.data as unknown as Request['query'];
+  next();
 };

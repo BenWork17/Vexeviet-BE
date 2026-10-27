@@ -1,5 +1,5 @@
 import { v4 as uuidv4 } from 'uuid';
-import { PaymentStatus, PaymentMethod, Prisma } from '@prisma/client';
+import { BookingStatus, PaymentStatus, PaymentMethod, Prisma } from '@prisma/client';
 import { writeAuditLog } from '@vexeviet/database';
 import { paymentConfig } from '../config';
 import {
@@ -14,8 +14,11 @@ import {
   AdminPaymentProvider,
   AdminPaymentRisk,
   AdminPaymentSummary,
+  BookingResyncResponse,
   LabeledCount,
   Pagination,
+  ReconciliationMismatch,
+  ReconciliationRow,
   TokenPayload,
 } from '../types';
 import {
@@ -26,6 +29,12 @@ import {
 } from '../repositories/payment.repository';
 import { transactionRepository } from '../repositories/transaction.repository';
 import { vnpayService } from './vnpay.service';
+import {
+  BookingSyncError,
+  BookingSyncUnavailableError,
+  bookingSyncService,
+  resolveBookingSyncTarget,
+} from './booking-sync.service';
 import { generateTransactionRef } from '../utils/signature';
 import {
   getIdempotencyRecord,
@@ -95,6 +104,39 @@ const deriveRisk = (
   if (status === PaymentStatus.PROCESSING && age > PROCESSING_WATCH_MINUTES) return 'watch';
 
   return 'normal';
+};
+
+/**
+ * Reconciliation label for a payment/booking pair, or `null` when they agree.
+ *
+ * Mirrors the SQL rule in `RECONCILIATION_WHERE`; a row the filter allowed but
+ * this returns `null` for (a status change between the two statements) is
+ * dropped rather than reported with a wrong label. Exported so the two
+ * definitions can be proven equivalent across every status pair.
+ *
+ * REFUNDED/PARTIALLY_REFUNDED never produce a label: a refund does not change
+ * the booking, so calling it a mismatch would flag every legitimate refund.
+ */
+export const classifyMismatch = (
+  paymentStatus: PaymentStatus,
+  bookingStatus: BookingStatus
+): ReconciliationMismatch | null => {
+  if (paymentStatus === PaymentStatus.COMPLETED) {
+    return bookingStatus === BookingStatus.PENDING ? 'BOOKING_NOT_CONFIRMED' : null;
+  }
+
+  if (
+    paymentStatus === PaymentStatus.FAILED ||
+    paymentStatus === PaymentStatus.CANCELLED ||
+    paymentStatus === PaymentStatus.EXPIRED
+  ) {
+    return bookingStatus === BookingStatus.PENDING ||
+      bookingStatus === BookingStatus.CONFIRMED
+      ? 'BOOKING_NOT_CANCELLED'
+      : null;
+  }
+
+  return null;
 };
 
 /**
@@ -436,6 +478,185 @@ export class PaymentService {
       countByStatus,
       providerTrend: buildDailyTrend(completedPoints, from, days),
       expiredCount,
+    };
+  }
+
+  /**
+   * Admin manual repair: re-drive the payment→booking status sync.
+   *
+   * Only statuses that *have* a booking transition can be re-driven; REFUNDED in
+   * particular is refused up front, because re-syncing it would cancel a
+   * confirmed booking.
+   *
+   * The downstream 409 means the booking is already ahead of the payment (e.g.
+   * `markPaymentFailed` refuses a CONFIRMED booking). That is the healthy
+   * outcome of a retry, not a server error, so it is reported as
+   * `alreadyConsistent` with a 200.
+   */
+  async resyncBookingStatus(
+    paymentId: string,
+    reason: string | undefined,
+    actor: TokenPayload
+  ): Promise<BookingResyncResponse> {
+    const payment = await paymentRepository.findById(paymentId);
+
+    if (!payment) {
+      throw new PaymentError('Payment not found', 404, 'PAYMENT_NOT_FOUND');
+    }
+
+    const target = resolveBookingSyncTarget(payment.status);
+
+    if (!target) {
+      throw new PaymentError(
+        `Payment status ${payment.status} has no booking sync (only COMPLETED, FAILED, CANCELLED and EXPIRED can be re-synced)`,
+        409,
+        'PAYMENT_STATUS_NOT_SYNCABLE'
+      );
+    }
+
+    const auditBase = {
+      actorId: actor.userId,
+      actorName: actor.email || actor.userId,
+      actorRole: actor.role,
+      action: 'PAYMENT_BOOKING_RESYNCED',
+      target: `payment:${payment.transactionRef}`,
+      targetId: payment.id,
+      severity: 'WARNING',
+    } as const;
+
+    try {
+      await bookingSyncService.syncBookingStatusAfterPayment(
+        payment.bookingId,
+        payment.status,
+        reason
+      );
+    } catch (error) {
+      // A 409 from booking-service means the booking is already ahead of the
+      // payment: there is nothing to repair, so report success.
+      if (error instanceof BookingSyncError && error.status === 409) {
+        const bookingStatus = await paymentRepository.findBookingStatus(payment.bookingId);
+
+        await writeAuditLog({
+          ...auditBase,
+          metadata: {
+            paymentStatus: payment.status,
+            intendedBookingAction: target.action,
+            outcome: 'already_consistent',
+            downstreamStatus: error.status,
+          },
+        });
+
+        return {
+          synced: false,
+          alreadyConsistent: true,
+          bookingStatus: bookingStatus ?? target.bookingStatus,
+        };
+      }
+
+      const downstreamStatus =
+        error instanceof BookingSyncError ? error.status : undefined;
+
+      await writeAuditLog({
+        ...auditBase,
+        metadata: {
+          paymentStatus: payment.status,
+          intendedBookingAction: target.action,
+          outcome: 'failed',
+          ...(downstreamStatus !== undefined ? { downstreamStatus } : {}),
+        },
+      });
+
+      // 401/503 is P1's fail-closed internal-key guard: the operator needs to
+      // read this as a deploy problem, not as a payment problem.
+      if (error instanceof BookingSyncError && (error.status === 401 || error.status === 503)) {
+        throw new PaymentError(
+          `Booking service rejected the internal API call (status ${error.status}). The internal API key is probably unconfigured or wrong — check BOOKING_SERVICE_INTERNAL_API_KEY.`,
+          502,
+          'BOOKING_SYNC_REJECTED'
+        );
+      }
+
+      if (error instanceof BookingSyncUnavailableError) {
+        throw new PaymentError(
+          'Booking service is unreachable. The booking was not re-synced.',
+          502,
+          'BOOKING_SYNC_UNAVAILABLE'
+        );
+      }
+
+      throw new PaymentError(
+        `Booking sync failed${
+          downstreamStatus !== undefined ? ` (status ${downstreamStatus})` : ''
+        }. The booking was not re-synced.`,
+        502,
+        'BOOKING_SYNC_FAILED'
+      );
+    }
+
+    await writeAuditLog({
+      ...auditBase,
+      metadata: {
+        paymentStatus: payment.status,
+        intendedBookingAction: target.action,
+        outcome: 'synced',
+      },
+    });
+
+    return {
+      synced: true,
+      bookingStatus: target.bookingStatus,
+    };
+  }
+
+  /**
+   * Read-only reconciliation report.
+   *
+   * Two statements regardless of page size: `findManyReconciliation` (the
+   * mismatch rule is a SQL relation filter, so `skip`/`take` bound the scan and
+   * the booking is joined in) and `countReconciliation`. Never a query per row.
+   *
+   * No audit row: this is a pure read, and auditing every page view would let a
+   * read fill the audit table.
+   */
+  async getReconciliation(
+    page: number,
+    limit: number
+  ): Promise<{ data: ReconciliationRow[]; pagination: Pagination }> {
+    const [rows, total] = await Promise.all([
+      paymentRepository.findManyReconciliation((page - 1) * limit, limit),
+      paymentRepository.countReconciliation(),
+    ]);
+
+    const data: ReconciliationRow[] = [];
+
+    for (const row of rows) {
+      // The SQL filter and this mapper apply the same rule; the guard keeps the
+      // row out of the payload with a *wrong* label rather than guessing.
+      const mismatch = classifyMismatch(row.status, row.booking.status);
+      if (!mismatch) continue;
+
+      data.push({
+        paymentId: row.id,
+        bookingId: row.bookingId,
+        bookingCode: row.booking.bookingCode,
+        provider: PROVIDER_BY_METHOD[row.method],
+        method: row.method,
+        paymentStatus: row.status,
+        bookingStatus: row.booking.status,
+        mismatch,
+        amount: row.amount.toNumber(),
+        createdAt: row.createdAt,
+      });
+    }
+
+    return {
+      data,
+      pagination: {
+        page,
+        limit,
+        total,
+        totalPages: total === 0 ? 0 : Math.ceil(total / limit),
+      },
     };
   }
 

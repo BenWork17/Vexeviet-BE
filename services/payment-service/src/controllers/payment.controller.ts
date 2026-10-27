@@ -4,12 +4,14 @@ import { paymentService } from '../services/payment.service';
 import { AuthRequest, canAccessBooking, sendForbidden } from '../middlewares/auth.middleware';
 import {
   AdminPaymentListQuery,
+  AdminPaymentReconciliationQuery,
   AdminPaymentSummaryQuery,
 } from '../validators/payment.validator';
 import {
   AdminPaymentListFilters,
   CreatePaymentRequest,
   RefundRequest,
+  ResyncBookingRequest,
 } from '../types';
 
 /** Same UUID shape `createPaymentSchema`/`refundSchema` accept. */
@@ -388,6 +390,77 @@ export class PaymentController {
       res.status(statusCode).json({
         success: false,
         error: error instanceof Error ? error.message : 'Failed to build payment summary',
+        code: (error as { code?: string }).code,
+      });
+    }
+  };
+
+  /**
+   * POST /api/v1/payments/admin/:paymentId/resync — ADMIN only.
+   *
+   * Manual repair of a payment→booking sync that never landed. `adminOnly` has
+   * already run, so an OPERATOR can never re-drive another operator's booking.
+   */
+  resyncPaymentBooking = async (req: Request, res: Response): Promise<void> => {
+    try {
+      const user = (req as AuthRequest).user;
+      if (!user) {
+        res.status(401).json({ success: false, error: 'Unauthorized', code: 'UNAUTHORIZED' });
+        return;
+      }
+
+      const { paymentId } = req.params;
+
+      if (!isUuid(paymentId)) {
+        res.status(400).json({
+          success: false,
+          error: 'paymentId must be a valid uuid',
+          code: 'INVALID_ID',
+        });
+        return;
+      }
+
+      const body = req.body as ResyncBookingRequest;
+
+      const result = await paymentService.resyncBookingStatus(paymentId, body.reason, user);
+
+      res.status(200).json({
+        success: true,
+        data: result,
+      });
+    } catch (error) {
+      const statusCode = (error as { statusCode?: number }).statusCode || 400;
+      res.status(statusCode).json({
+        success: false,
+        error: error instanceof Error ? error.message : 'Failed to re-sync booking',
+        code: (error as { code?: string }).code,
+      });
+    }
+  };
+
+  /** GET /api/v1/payments/admin/reconciliation — ADMIN only, read-only. */
+  listReconciliation = async (req: Request, res: Response): Promise<void> => {
+    try {
+      const user = (req as AuthRequest).user;
+      if (!user) {
+        res.status(401).json({ success: false, error: 'Unauthorized', code: 'UNAUTHORIZED' });
+        return;
+      }
+
+      const { page, limit } = req.query as unknown as AdminPaymentReconciliationQuery;
+
+      const result = await paymentService.getReconciliation(page, limit);
+
+      res.status(200).json({
+        success: true,
+        data: result.data,
+        pagination: result.pagination,
+      });
+    } catch (error) {
+      const statusCode = (error as { statusCode?: number }).statusCode || 400;
+      res.status(statusCode).json({
+        success: false,
+        error: error instanceof Error ? error.message : 'Failed to build reconciliation report',
         code: (error as { code?: string }).code,
       });
     }

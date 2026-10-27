@@ -1,4 +1,4 @@
-import { Payment, PaymentStatus, Prisma } from '@prisma/client';
+import { BookingStatus, Payment, PaymentStatus, Prisma } from '@prisma/client';
 import prisma from '../config/database';
 
 /** Row shape returned by the admin list query. */
@@ -26,6 +26,43 @@ export interface AdminPaymentCountRow {
   status: PaymentStatus;
   count: number;
 }
+
+/** A reconciliation row: the payment plus its booking, read in one statement. */
+export type ReconciliationPaymentRow = Prisma.PaymentGetPayload<{
+  select: {
+    id: true;
+    bookingId: true;
+    method: true;
+    status: true;
+    amount: true;
+    createdAt: true;
+    booking: { select: { bookingCode: true; status: true } };
+  };
+}>;
+
+/**
+ * Payments that disagree with their booking's status. Expressed as a Prisma
+ * relation filter so the database does the filtering and the page stays bounded
+ * by `skip`/`take`.
+ *
+ * REFUNDED/PARTIALLY_REFUNDED are absent by design: a refund does not change
+ * the booking, so they are never a mismatch. Exported so this SQL rule can be
+ * proven equivalent to `classifyMismatch` for every status pair.
+ */
+export const RECONCILIATION_WHERE: Prisma.PaymentWhereInput = {
+  OR: [
+    {
+      status: PaymentStatus.COMPLETED,
+      booking: { status: BookingStatus.PENDING },
+    },
+    {
+      status: {
+        in: [PaymentStatus.FAILED, PaymentStatus.CANCELLED, PaymentStatus.EXPIRED],
+      },
+      booking: { status: { in: [BookingStatus.PENDING, BookingStatus.CONFIRMED] } },
+    },
+  ],
+};
 
 export class PaymentRepository {
   async create(data: Prisma.PaymentCreateInput): Promise<Payment> {
@@ -243,6 +280,55 @@ export class PaymentRepository {
     });
 
     return rows.map((row) => ({ status: row.status, count: row._count._all }));
+  }
+
+  /**
+   * Payments whose status disagrees with their booking's status.
+   *
+   * The mismatch rule is pushed into SQL as a relation filter so the page is
+   * bounded by `skip`/`take` — never a scan-and-filter in JS, and never a loop
+   * per payment. The booking is joined in the same statement, so the label and
+   * the row count cannot disagree.
+   *
+   * REFUNDED/PARTIALLY_REFUNDED are absent by design: a refund does not change
+   * the booking, so they are never a mismatch.
+   */
+  async findManyReconciliation(skip: number, take: number): Promise<ReconciliationPaymentRow[]> {
+    return prisma.payment.findMany({
+      where: RECONCILIATION_WHERE,
+      select: {
+        id: true,
+        bookingId: true,
+        method: true,
+        status: true,
+        amount: true,
+        createdAt: true,
+        booking: { select: { bookingCode: true, status: true } },
+      },
+      orderBy: { createdAt: 'desc' },
+      skip,
+      take,
+    });
+  }
+
+  /** `pagination.total` for the reconciliation page. */
+  async countReconciliation(): Promise<number> {
+    return prisma.payment.count({ where: RECONCILIATION_WHERE });
+  }
+
+  /**
+   * Minimal booking projection for a single payment. `findById` includes the
+   * booking at runtime but is typed as the bare `Payment`, so the resync path
+   * (which reports the booking's real status on an "already consistent" answer)
+   * asks for it explicitly here.
+   */
+  async findBookingStatus(bookingId: string): Promise<BookingStatus | null> {
+    const booking = await prisma.booking.findUnique({
+      where: { id: bookingId },
+      select: { status: true },
+    });
+
+    return booking ? booking.status : null;
   }
 }
 

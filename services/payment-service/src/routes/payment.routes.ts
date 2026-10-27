@@ -6,6 +6,8 @@ import {
   validateRefund,
   validateAdminPaymentList,
   validateAdminPaymentSummary,
+  validateAdminPaymentReconciliation,
+  validateResyncBooking,
 } from '../validators/payment.validator';
 
 const router: IRouter = Router();
@@ -29,8 +31,14 @@ const handler =
  * `/admin/all` and `/admin/summary` would be swallowed and treated as payment ids
  * (yielding 400/404 instead of the admin payload). `/status` has the same hazard.
  *
- * Current order: `/`, `/admin/all`, `/admin/summary`, `/status`, `/booking/:bookingId`,
+ * Current order: `/`, `/admin/all`, `/admin/summary`, `/admin/reconciliation`,
+ * `/admin/:paymentId/resync`, `/status`, `/booking/:bookingId`,
  * `/:paymentId/cancel`, `/refund`, `/:paymentId`.
+ *
+ * Neither admin addition can be shadowed: `/admin/reconciliation` is a literal
+ * path, and `/admin/:paymentId/resync` has three segments, whereas
+ * `/:paymentId` (last) and `/:paymentId/cancel` are single- and two-segment.
+ * They stay above every parameterised route to keep the documented order intact.
  */
 
 router.post('/', authMiddleware, validateCreatePayment, handler(paymentController.createPayment));
@@ -50,6 +58,25 @@ router.get(
   adminOnly,
   validateAdminPaymentSummary,
   handler(paymentController.getAdminPaymentSummary)
+);
+
+// Read-only reconciliation report. ADMIN only: it spans every operator's data.
+router.get(
+  '/admin/reconciliation',
+  authMiddleware,
+  adminOnly,
+  validateAdminPaymentReconciliation,
+  handler(paymentController.listReconciliation)
+);
+
+// Manual repair of a failed payment→booking sync. ADMIN only — an OPERATOR must
+// not be able to re-drive another operator's booking.
+router.post(
+  '/admin/:paymentId/resync',
+  authMiddleware,
+  adminOnly,
+  validateResyncBooking,
+  handler(paymentController.resyncPaymentBooking)
 );
 
 // --- Public-ish authenticated reads ---

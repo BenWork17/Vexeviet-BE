@@ -1,4 +1,11 @@
-import { PaymentStatus, PaymentMethod, TransactionType, TransactionStatus, UserRole } from '@prisma/client';
+import {
+  BookingStatus,
+  PaymentStatus,
+  PaymentMethod,
+  TransactionType,
+  TransactionStatus,
+  UserRole,
+} from '@prisma/client';
 
 export interface TokenPayload {
   userId: string;
@@ -208,4 +215,58 @@ export interface AdminPaymentSummary {
   countByStatus: LabeledCount[];
   providerTrend: LabeledCount[];
   expiredCount: number;
+}
+
+// =====================================================
+// ADMIN PAYMENT → BOOKING SYNC (retry + reconciliation)
+// =====================================================
+
+/** The booking transition a payment status maps to. */
+export type BookingSyncAction = 'CONFIRM' | 'PAYMENT_FAILED';
+
+/** Optional body of `POST /payments/admin/:paymentId/resync`. */
+export interface ResyncBookingRequest {
+  reason?: string;
+}
+
+export type BookingResyncOutcome = 'synced' | 'already_consistent' | 'failed';
+
+/**
+ * Result of an admin re-sync.
+ *
+ * - `synced` → the booking transition was applied (`alreadyConsistent` absent).
+ * - `alreadyConsistent` → the booking was already ahead of the payment; the
+ *   downstream 409 is reported as a success because there is nothing to repair.
+ */
+export interface BookingResyncResponse {
+  synced: boolean;
+  alreadyConsistent?: boolean;
+  bookingStatus: BookingStatus;
+}
+
+/**
+ * Closed set of reconciliation labels:
+ *
+ * - `BOOKING_NOT_CONFIRMED` — the payment is COMPLETED but the booking is still
+ *   PENDING, i.e. the confirm never landed.
+ * - `BOOKING_NOT_CANCELLED` — the payment is FAILED/CANCELLED/EXPIRED but the
+ *   booking is still PENDING or CONFIRMED, i.e. the failure never propagated.
+ *
+ * REFUNDED/PARTIALLY_REFUNDED are deliberately never a mismatch: a refund does
+ * not change the booking status, so treating one as inconsistent would report
+ * every legitimate refund as an error.
+ */
+export type ReconciliationMismatch = 'BOOKING_NOT_CONFIRMED' | 'BOOKING_NOT_CANCELLED';
+
+export interface ReconciliationRow {
+  paymentId: string;
+  bookingId: string;
+  bookingCode: string;
+  provider: AdminPaymentProvider;
+  method: PaymentMethod;
+  paymentStatus: PaymentStatus;
+  bookingStatus: BookingStatus;
+  mismatch: ReconciliationMismatch;
+  amount: number;
+  createdAt: Date;
 }
