@@ -36,6 +36,17 @@ export interface Pagination {
   totalPages: number;
 }
 
+/**
+ * Response of `POST /users/admin/:id/resend-verification`.
+ *
+ * Deliberately carries the id and a fixed message only: the verification code
+ * must never leave the service.
+ */
+export interface AdminResendVerificationResult {
+  id: string;
+  message: string;
+}
+
 
 export interface RegisterRequest {
   method: 'email' | 'phone';

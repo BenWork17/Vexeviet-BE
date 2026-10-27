@@ -27,6 +27,21 @@ router.get('/admin/all', authMiddleware, adminOnly, (req, res, next) => {
 });
 
 /**
+ * @route   POST /api/v1/users/admin/:id/resend-verification
+ * @desc    Re-send the email verification code to an unverified user
+ * @access  ADMIN
+ *
+ * Registered inside the `/admin/*` block, ahead of `PATCH /admin/:id`. The two
+ * cannot shadow each other: this path has a second literal segment
+ * (`resend-verification`) that `PATCH /admin/:id` has no room for, and the
+ * methods differ anyway (POST vs PATCH). No unconstrained `/:id` route exists in
+ * this file, so `/admin/*` literals are never reached by an id-shaped URL.
+ */
+router.post('/admin/:id/resend-verification', authMiddleware, adminOnly, (req, res, next) => {
+  userController.resendVerification(req, res).catch(next);
+});
+
+/**
  * @route   PATCH /api/v1/users/admin/:id
  * @desc    Change a user's role and/or status
  * @body    { role?, status? }

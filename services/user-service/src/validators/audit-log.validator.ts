@@ -33,4 +33,16 @@ export const auditLogListQuerySchema = z.object({
   limit: z.coerce.number().int().min(1, 'limit must be >= 1').max(100, 'limit must be <= 100').default(20),
 });
 
+/**
+ * Audit log export query: the same filters as the list, without `page`/`limit`.
+ *
+ * Derived from the list schema so the two can never drift. Paging is
+ * meaningless for a file download; the row cap is applied by the controller.
+ */
+export const auditLogExportQuerySchema = auditLogListQuerySchema.omit({
+  page: true,
+  limit: true,
+});
+
 export type AuditLogListQuery = z.infer<typeof auditLogListQuerySchema>;
+export type AuditLogExportQuery = z.infer<typeof auditLogExportQuerySchema>;

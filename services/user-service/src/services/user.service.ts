@@ -1,6 +1,7 @@
 import { writeAuditLog } from '@vexeviet/database';
 import { UserRole, UserStatus } from '@prisma/client';
-import { AdminUser, Pagination, User } from '../types';
+import { AdminResendVerificationResult, AdminUser, Pagination, User } from '../types';
+import { otpService } from './otp.service';
 import {
   AdminUserFilters,
   AdminUserRow,
@@ -189,6 +190,95 @@ export class UserService {
     }
 
     return toAdminUser(updated);
+  }
+
+  /**
+   * Re-send the verification code to an unverified user (admin Users screen).
+   *
+   * Email only: the SMS path is not configured, so a phone-registered user is
+   * refused rather than silently reported as sent.
+   *
+   * Guards, in order (all 409, in the order the buttons map to them):
+   *  - missing row                          → 404
+   *  - no `registrationMethod`              → 409
+   *  - `registrationMethod === 'phone'`     → 409 (no SMS provider)
+   *  - `status === 'ACTIVE'`                → 409 "User already verified"
+   *  - no email on the row                  → 409
+   *
+   * The ACTIVE check mirrors `otpService.resend`: calling `generateAndSend`
+   * directly must not become a way to mail an already-verified account, which
+   * would be a nuisance-mail vector.
+   */
+  async resendVerification(id: string, actor: AuditActor): Promise<AdminResendVerificationResult> {
+    const target = await this.userRepo.findById(id);
+
+    if (!target) {
+      throw new UserServiceError('User not found', 404);
+    }
+
+    // `registrationMethod` is a free-form String column, so normalize before
+    // deciding; anything that is not email/phone is refused rather than guessed.
+    const method = target.registrationMethod?.trim().toLowerCase() ?? '';
+
+    if (!method) {
+      throw new UserServiceError('User has no registration method', 409);
+    }
+
+    if (method === 'phone') {
+      throw new UserServiceError(
+        'Cannot re-send verification: this user registered by phone and SMS delivery is not configured',
+        409
+      );
+    }
+
+    if (method !== 'email') {
+      throw new UserServiceError(
+        `Cannot re-send verification: unsupported registration method '${method}'`,
+        409
+      );
+    }
+
+    if (target.status === UserStatus.ACTIVE) {
+      throw new UserServiceError('User already verified', 409);
+    }
+
+    if (!target.email) {
+      throw new UserServiceError('User has no email address to send to', 409);
+    }
+
+    let delivery = { success: false, message: 'Failed to send verification code' };
+    try {
+      // `method` is narrowed to 'email' by the guards above.
+      delivery = await otpService.generateAndSend(id, method);
+    } catch (error) {
+      delivery = {
+        success: false,
+        message: error instanceof Error ? error.message : 'Failed to send verification code',
+      };
+    }
+
+    const actorName = await this.resolveActorName(actor);
+
+    await this.emitAudit({
+      actorId: actor.userId,
+      actorName,
+      actorRole: 'ADMIN',
+      action: 'USER_VERIFICATION_RESENT',
+      target: `user:${id}`,
+      targetId: id,
+      severity: 'INFO',
+      // Never the code itself — only how it was delivered and whether it went out.
+      metadata: { method: 'email', deliverySucceeded: delivery.success },
+    });
+
+    if (!delivery.success) {
+      // 502, not 500/409: the request was well-formed and authorised, the
+      // upstream send failed. The code row may or may not have been written;
+      // what the admin needs to know is "it did not go out".
+      throw new UserServiceError(delivery.message, 502);
+    }
+
+    return { id, message: 'Verification code sent to email' };
   }
 
   /**
