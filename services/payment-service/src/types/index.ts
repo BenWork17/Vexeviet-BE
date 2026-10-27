@@ -1,4 +1,11 @@
-import { PaymentStatus, PaymentMethod, TransactionType, TransactionStatus } from '@prisma/client';
+import { PaymentStatus, PaymentMethod, TransactionType, TransactionStatus, UserRole } from '@prisma/client';
+
+export interface TokenPayload {
+  userId: string;
+  email: string;
+  role: UserRole;
+  jti: string;
+}
 
 export interface CreatePaymentRequest {
   bookingId: string;
@@ -148,4 +155,57 @@ export interface IdempotencyRecord {
   response: PaymentResponse;
   createdAt: Date;
   expiresAt: Date;
+}
+
+// =====================================================
+// ADMIN PAYMENTS (contract Shape 2)
+// =====================================================
+
+/** Provider display label — the admin UI renders this literal string. */
+export type AdminPaymentProvider = 'VNPay' | 'Momo' | 'ZaloPay' | 'BankTransfer' | 'Cash';
+
+/** Derived from status + age at read time; never persisted. */
+export type AdminPaymentRisk = 'normal' | 'watch' | 'urgent';
+
+export interface AdminPayment {
+  id: string;
+  bookingCode: string;
+  provider: AdminPaymentProvider;
+  method: PaymentMethod;
+  status: PaymentStatus;
+  amount: number;
+  risk: AdminPaymentRisk;
+  transactionRef: string;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface AdminPaymentListFilters {
+  status?: PaymentStatus;
+  method?: PaymentMethod;
+  bookingCode?: string;
+  provider?: AdminPaymentProvider;
+  from?: Date;
+  to?: Date;
+  /** Scope forced by the token for OPERATOR callers; undefined for ADMIN. */
+  operatorId?: string;
+}
+
+export interface Pagination {
+  page: number;
+  limit: number;
+  total: number;
+  totalPages: number;
+}
+
+export interface LabeledCount {
+  label: string;
+  value: number;
+}
+
+export interface AdminPaymentSummary {
+  totalCompleted: number;
+  countByStatus: LabeledCount[];
+  providerTrend: LabeledCount[];
+  expiredCount: number;
 }
