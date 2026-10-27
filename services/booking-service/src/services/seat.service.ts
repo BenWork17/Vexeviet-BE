@@ -69,7 +69,9 @@ export class SeatService {
     for (const tSeat of templateSeats) {
       const bookingRecord = seatMap.get(tSeat.seatNumber);
       
-      const seatInfo = {
+      // Explicit `SeatStatus` type: without it `status` is inferred as the
+      // literal 'AVAILABLE' and the reassignments below fail to type-check.
+      const seatInfo: SeatAvailabilityResponse['seats'][number] = {
         id: tSeat.id,
         seatNumber: tSeat.seatNumber,
         seatLabel: tSeat.seatLabel || tSeat.seatNumber,
@@ -87,7 +89,7 @@ export class SeatService {
       };
 
       if (!tSeat.isAvailable) {
-        seatInfo.status = 'BLOCKED';
+        seatInfo.status = SeatStatus.BLOCKED;
         seatInfo.isSelectable = false;
       } else if (bookingRecord) {
         const isHeldAndValid =

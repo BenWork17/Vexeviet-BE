@@ -1,10 +1,10 @@
-import { Booking as PrismaBooking, BookingPassenger as PrismaBookingPassenger, BookingSeat as PrismaBookingSeat, BookingStatus, SeatStatus, UserRole } from '@vexeviet/database';
+import { Booking as PrismaBooking, BookingPassenger as PrismaBookingPassenger, BookingSeat as PrismaBookingSeat, BookingStatus, SeatStatus, UserRole, PaymentStatus, Prisma, SeatType, SeatPosition } from '@vexeviet/database';
 
 // Re-export Prisma types
 export type Booking = PrismaBooking;
 export type BookingPassenger = PrismaBookingPassenger;
 export type BookingSeat = PrismaBookingSeat;
-export { BookingStatus, SeatStatus, UserRole };
+export { BookingStatus, SeatStatus, UserRole, PaymentStatus };
 
 // Token payload from JWT
 export interface TokenPayload {
@@ -159,17 +159,38 @@ export interface SeatAvailabilityRequest {
   departureDate: string;
 }
 
+/**
+ * One seat row in a seat-availability response.
+ *
+ * Mirrors the object `SeatService.getAvailability` actually builds from the bus
+ * template (it already returns all of these fields at runtime — this type only
+ * names them, so the `status` field can be typed as `SeatStatus` rather than
+ * being inferred as the literal `'AVAILABLE'`).
+ */
+export interface SeatAvailabilityItem {
+  id: string;
+  seatNumber: string;
+  seatLabel: string;
+  row: number;
+  column: string;
+  floor: number;
+  seatType: SeatType;
+  position: SeatPosition;
+  basePrice: number;
+  priceModifier: number;
+  finalPrice: number;
+  status: SeatStatus;
+  isSelectable: boolean;
+  metadata: Prisma.JsonValue | null;
+}
+
 // Seat availability response
 export interface SeatAvailabilityResponse {
   routeId: string;
   departureDate: string;
   totalSeats: number;
   availableSeats: number;
-  seats: {
-    seatNumber: string;
-    status: SeatStatus;
-    lockedUntil?: string;
-  }[];
+  seats: SeatAvailabilityItem[];
 }
 
 // Event types for message queue
@@ -230,4 +251,64 @@ export interface IdempotencyRecord {
   response: string; // JSON stringified response
   createdAt: Date;
   expiresAt: Date;
+}
+
+// =====================================================
+// ADMIN API TYPES (contract Shape 1)
+// =====================================================
+
+/** Sort options accepted by `GET /bookings/admin/all`. */
+export type AdminBookingSort =
+  | 'createdAt'
+  | '-createdAt'
+  | 'departureDate'
+  | '-departureDate';
+
+/** Query for `GET /bookings/admin/all` — already validated/clamped by the controller. */
+export interface AdminBookingQuery {
+  status?: BookingStatus;
+  paymentStatus?: PaymentStatus;
+  operatorId?: string;
+  q?: string;
+  from?: string;
+  to?: string;
+  page: number;
+  limit: number;
+  sort: AdminBookingSort;
+}
+
+/** One row of the admin booking list (contract Shape 1). */
+export interface AdminBooking {
+  id: string;
+  bookingCode: string;
+  customerName: string;
+  customerEmail: string;
+  customerPhone: string;
+  operatorId: string;
+  operatorName: string;
+  routeId: string;
+  routeName: string;
+  departureDate: string; // YYYY-MM-DD
+  seats: string[];
+  status: BookingStatus;
+  paymentStatus: PaymentStatus | null;
+  totalAmount: number;
+  createdAt: string;
+}
+
+/** `{ label, value }` point used by dashboard arrays. */
+export interface DashboardPoint {
+  label: string;
+  value: number;
+}
+
+/** Response for `GET /bookings/admin/dashboard` (contract Shape 1 dashboard). */
+export interface AdminDashboardStats {
+  todayBookings: number;
+  revenueCompleted: number;
+  paymentsNeedingAction: number;
+  activeRoutes: number;
+  operatorCount: number;
+  revenueTrend: DashboardPoint[];
+  bookingStatusSummary: DashboardPoint[];
 }

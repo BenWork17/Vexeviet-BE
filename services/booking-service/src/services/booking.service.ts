@@ -1,9 +1,17 @@
 import { v4 as uuidv4 } from 'uuid';
 import { customAlphabet } from 'nanoid';
 import { config } from '../config';
-import { BookingRepository } from '../repositories/booking.repository';
+import { BookingRepository, type AdminBookingRow } from '../repositories/booking.repository';
 import { SeatRepository } from '../repositories/seat.repository';
-import { prisma, Prisma, BookingStatus, SeatStatus, RouteStatus, Route } from '@vexeviet/database';
+import {
+  prisma,
+  Prisma,
+  BookingStatus,
+  SeatStatus,
+  RouteStatus,
+  Route,
+  writeAuditLog,
+} from '@vexeviet/database';
 import {
   CreateBookingRequest,
   CreateBookingResponse,
@@ -11,6 +19,11 @@ import {
   BookingQuery,
   PaginatedResponse,
   PriceBreakdown,
+  TokenPayload,
+  AdminBooking,
+  AdminBookingQuery,
+  AdminDashboardStats,
+  DashboardPoint,
 } from '../types';
 import {
   NotFoundError,
@@ -336,6 +349,19 @@ export class BookingService {
 
     await this.seatRepo.confirmSeatsByBookingId(bookingId);
 
+    // Audit row emitted at the actual status transition (PENDING → CONFIRMED).
+    // `writeAuditLog` never throws, so it cannot fail this request.
+    await writeAuditLog({
+      actorId: null,
+      actorName: 'SYSTEM',
+      actorRole: 'SYSTEM',
+      action: 'BOOKING_CONFIRMED',
+      target: `booking:${booking.bookingCode}`,
+      targetId: booking.id,
+      severity: 'INFO',
+      metadata: { bookingCode: booking.bookingCode, previousStatus: booking.status },
+    });
+
     return this.formatBookingDetailResponse(updatedBooking);
   }
 
@@ -357,7 +383,323 @@ export class BookingService {
 
     await this.seatRepo.releaseSeatsByBookingId(bookingId);
 
+    // Audit row emitted at the actual status transition (→ CANCELLED by payment failure).
+    await writeAuditLog({
+      actorId: null,
+      actorName: 'SYSTEM',
+      actorRole: 'SYSTEM',
+      action: 'BOOKING_PAYMENT_FAILED',
+      target: `booking:${booking.bookingCode}`,
+      targetId: booking.id,
+      severity: 'WARNING',
+      metadata: {
+        bookingCode: booking.bookingCode,
+        previousStatus: booking.status,
+        reason: reason ?? 'Payment failed',
+      },
+    });
+
     return this.formatBookingDetailResponse(updatedBooking);
+  }
+
+  // =====================================================
+  // ADMIN
+  // =====================================================
+
+  /**
+   * Paginated admin booking list (contract Shape 1).
+   *
+   * Scoping: an OPERATOR token is forced to `route.operatorId === token.userId`
+   * and any `operatorId` query param is discarded. ADMIN sees everything and may
+   * narrow by `operatorId`.
+   */
+  async getAdminBookings(
+    actor: TokenPayload,
+    query: AdminBookingQuery
+  ): Promise<PaginatedResponse<AdminBooking>> {
+    const page = query.page;
+    const limit = query.limit;
+    const skip = (page - 1) * limit;
+
+    const where = this.buildAdminWhere(actor, query);
+
+    // `paymentStatus` filters on the booking's *latest* payment (same rule the
+    // response field uses), which Prisma's relation filters cannot express
+    // exactly. It is resolved to an ID set in one aggregate query — never a
+    // per-row lookup.
+    if (query.paymentStatus) {
+      const ids = await this.bookingRepo.findIdsByLatestPaymentStatus(query.paymentStatus);
+
+      if (ids.length === 0) {
+        return {
+          data: [],
+          pagination: { page, limit, total: 0, totalPages: 0 },
+        };
+      }
+
+      where.id = { in: ids };
+    }
+
+    const orderBy: Prisma.BookingOrderByWithRelationInput = this.buildAdminOrderBy(query.sort);
+
+    const [rows, total] = await Promise.all([
+      this.bookingRepo.findAdminPage({ where, orderBy, skip, take: limit }),
+      this.bookingRepo.countAdmin(where),
+    ]);
+
+    return {
+      data: rows.map(row => this.formatAdminBooking(row)),
+      pagination: {
+        page,
+        limit,
+        total,
+        totalPages: Math.ceil(total / limit),
+      },
+    };
+  }
+
+  /**
+   * Dashboard aggregates (contract Shape 1 dashboard).
+   *
+   * Window = `days` calendar days ending today, `[startOfDay(days-1 ago), startOfTomorrow)`.
+   * Every time-scoped figure (revenue, payments needing action, revenue trend,
+   * status summary) uses that window; `activeRoutes` / `operatorCount` are
+   * current-state counts.
+   */
+  async getAdminDashboard(days: number): Promise<AdminDashboardStats> {
+    const { from, to, dayStarts } = this.buildWindow(days);
+
+    const [
+      todayBookings,
+      revenueCompleted,
+      paymentsNeedingAction,
+      activeRoutes,
+      operatorCount,
+      revenueRows,
+      statusGroups,
+    ] = await Promise.all([
+      this.bookingRepo.countCreatedSince(this.startOfToday()),
+      this.bookingRepo.sumCompletedPayments(from, to),
+      this.bookingRepo.countPaymentsNeedingAction(from, to),
+      this.bookingRepo.countActiveRoutes(),
+      this.bookingRepo.countActiveOperators(),
+      // Day buckets must use the same "local day" definition as the labels
+      // below and as "today 00:00 local", so the offset is passed explicitly.
+      this.bookingRepo.findRevenueTrend(from, to, this.localUtcOffsetMinutes(from)),
+      this.bookingRepo.countByStatusSince(from),
+    ]);
+
+    // Zero-fill: one point per day in the window, in chronological order.
+    const revenueByDay = new Map<string, Prisma.Decimal>();
+    for (const row of revenueRows) {
+      revenueByDay.set(row.day, row.total ?? new Prisma.Decimal(0));
+    }
+
+    const revenueTrend: DashboardPoint[] = dayStarts.map(day => ({
+      label: day.label,
+      value: Math.round(Number(revenueByDay.get(day.label) ?? 0)),
+    }));
+
+    const bookingStatusSummary: DashboardPoint[] = statusGroups.map(group => ({
+      label: group.status,
+      value: group.count,
+    }));
+
+    return {
+      todayBookings,
+      revenueCompleted: Math.round(Number(revenueCompleted)),
+      paymentsNeedingAction,
+      activeRoutes,
+      operatorCount,
+      revenueTrend,
+      bookingStatusSummary,
+    };
+  }
+
+  /** Build the `where` for the admin list, applying JWT-derived operator scoping. */
+  private buildAdminWhere(
+    actor: TokenPayload,
+    query: AdminBookingQuery
+  ): Prisma.BookingWhereInput {
+    const where: Prisma.BookingWhereInput = {};
+
+    if (query.status) {
+      where.status = query.status;
+    }
+
+    // OPERATOR scoping always wins over the query param — never trust it.
+    if (actor.role === 'OPERATOR') {
+      where.route = { operatorId: actor.userId };
+    } else if (query.operatorId) {
+      where.route = { operatorId: query.operatorId };
+    }
+
+    if (query.from || query.to) {
+      where.departureDate = {
+        ...(query.from ? { gte: this.parseDateStart(query.from) } : {}),
+        ...(query.to ? { lte: this.parseDateEnd(query.to) } : {}),
+      };
+    }
+
+    if (query.q) {
+      const contains = query.q;
+      // MySQL's default collation is case-insensitive, so `contains` is already
+      // case-insensitive here (Prisma's `mode: 'insensitive'` is PostgreSQL-only).
+      where.OR = [
+        { bookingCode: { contains } },
+        {
+          user: {
+            is: {
+              OR: [
+                { email: { contains } },
+                { firstName: { contains } },
+                { lastName: { contains } },
+              ],
+            },
+          },
+        },
+        { contactEmail: { contains } },
+      ];
+    }
+
+    return where;
+  }
+
+  /** Map the contract's `sort` token to a Prisma `orderBy`. */
+  private buildAdminOrderBy(sort: AdminBookingQuery['sort']): Prisma.BookingOrderByWithRelationInput {
+    const descending = sort.startsWith('-');
+    const field = descending ? sort.slice(1) : sort;
+
+    if (field === 'departureDate') {
+      return { departureDate: descending ? 'desc' : 'asc' };
+    }
+
+    return { createdAt: descending ? 'desc' : 'asc' };
+  }
+
+  /** Map a loaded admin row to the contract's AdminBooking shape. */
+  private formatAdminBooking(row: AdminBookingRow): AdminBooking {
+    const { user, route } = row;
+
+    const fullName = [user?.firstName, user?.lastName]
+      .filter((part): part is string => Boolean(part && part.trim()))
+      .join(' ')
+      .trim();
+
+    const seatNumbers = row.seats.map(seat => seat.seatNumber);
+    const fallbackSeats = row.passengers.map(passenger => passenger.seatNumber);
+    const seats = (seatNumbers.length > 0 ? seatNumbers : fallbackSeats)
+      .slice()
+      .sort((a, b) => a.localeCompare(b));
+
+    const operatorName = [route.operator?.firstName, route.operator?.lastName]
+      .filter((part): part is string => Boolean(part && part.trim()))
+      .join(' ')
+      .trim();
+
+    return {
+      id: row.id,
+      bookingCode: row.bookingCode,
+      customerName: fullName || row.contactEmail || 'Guest',
+      customerEmail: user?.email ?? row.contactEmail,
+      customerPhone: user?.phone ?? row.contactPhone,
+      operatorId: route.operatorId,
+      operatorName: operatorName || 'Unknown Operator',
+      routeId: route.id,
+      routeName: `${route.origin} → ${route.destination}`,
+      departureDate: this.formatUtcDateOnly(row.departureDate),
+      seats,
+      status: row.status,
+      paymentStatus: row.payments[0]?.status ?? null,
+      // Decimal → number only here, at the response boundary.
+      totalAmount:
+        Math.round(
+          (Number(row.totalPrice) + Number(row.serviceFee) - Number(row.discount)) * 100
+        ) / 100,
+      createdAt: row.createdAt.toISOString(),
+    };
+  }
+
+  /** Local midnight at the start of today (contract: "today 00:00 local"). */
+  private startOfToday(): Date {
+    const now = new Date();
+    return new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  }
+
+  /**
+   * The dashboard window: `days` calendar days ending today.
+   * Returns the SQL bounds plus one zero-filled bucket per day.
+   */
+  private buildWindow(days: number): {
+    from: Date;
+    to: Date;
+    dayStarts: { label: string; at: Date }[];
+  } {
+    const today = this.startOfToday();
+    const from = new Date(today);
+    from.setDate(from.getDate() - (days - 1));
+
+    const to = new Date(today);
+    to.setDate(to.getDate() + 1);
+
+    const dayStarts: { label: string; at: Date }[] = [];
+    for (let i = 0; i < days; i += 1) {
+      const at = new Date(from);
+      at.setDate(from.getDate() + i);
+      dayStarts.push({ label: this.formatLocalDate(at), at });
+    }
+
+    return { from, to, dayStarts };
+  }
+
+  /** Minutes east of UTC for `date` (e.g. +420 for UTC+7). */
+  private localUtcOffsetMinutes(date: Date): number {
+    // getTimezoneOffset() returns minutes *behind* UTC, so negate it.
+    return -date.getTimezoneOffset();
+  }
+
+  /**
+   * Format a Date as `YYYY-MM-DD` **in UTC**.
+   *
+   * Use for values read from a `@db.Date` column: MySQL `DATE` has no time or
+   * zone, Prisma surfaces it as UTC midnight, so the UTC view is the stored day.
+   * Using local getters would shift e.g. `2026-06-08` to `2026-06-07` west of UTC.
+   */
+  private formatUtcDateOnly(value: Date): string {
+    const year = value.getUTCFullYear();
+    const month = String(value.getUTCMonth() + 1).padStart(2, '0');
+    const day = String(value.getUTCDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  }
+
+  /**
+   * Format a Date as `YYYY-MM-DD` **in the server's local zone**.
+   *
+   * Use for calendar-day buckets the service itself computes (the dashboard
+   * window), which are anchored to local midnight to match
+   * "bookings created since today 00:00 local".
+   */
+  private formatLocalDate(value: Date): string {
+    const year = value.getFullYear();
+    const month = String(value.getMonth() + 1).padStart(2, '0');
+    const day = String(value.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  }
+
+  /**
+   * Start of the given ISO date, as UTC midnight.
+   *
+   * `booking.departureDate` is a `@db.Date` column, which Prisma compares as UTC
+   * midnight — a local-midnight bound would clip or admit a day at the edges
+   * depending on the server's zone.
+   */
+  private parseDateStart(value: string): Date {
+    return new Date(`${value.slice(0, 10)}T00:00:00.000Z`);
+  }
+
+  /** End of the given ISO date, as UTC end-of-day (inclusive). */
+  private parseDateEnd(value: string): Date {
+    return new Date(`${value.slice(0, 10)}T23:59:59.999Z`);
   }
 
   /**

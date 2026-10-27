@@ -2,6 +2,10 @@ import { Request, Response, NextFunction } from 'express';
 import { BookingService } from '../services/booking.service';
 import { AuthRequest } from '../middlewares/auth.middleware';
 import { CreateBookingRequest, BookingQuery, CancelBookingRequest, BookingStatus } from '../types';
+import {
+  AdminBookingQueryLocals,
+  AdminDashboardQueryLocals,
+} from '../validators/admin-booking.validator';
 
 export class BookingController {
   private bookingService: BookingService;
@@ -177,6 +181,62 @@ export class BookingController {
         success: true,
         data: booking,
         message: 'Booking marked as payment failed',
+      });
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  /**
+   * Admin: list all bookings
+   * GET /api/v1/bookings/admin/all
+   *
+   * Query params are validated/clamped by `validateAdminBookingQuery`, which
+   * leaves the parsed result on `res.locals`.
+   */
+  getAdminBookings = async (
+    req: AuthRequest,
+    res: Response<unknown, AdminBookingQueryLocals>,
+    next: NextFunction
+  ): Promise<void> => {
+    try {
+      if (!req.user) {
+        res.status(401).json({
+          success: false,
+          error: { code: 'UNAUTHORIZED', message: 'Authentication required' },
+        });
+        return;
+      }
+
+      const result = await this.bookingService.getAdminBookings(
+        req.user,
+        res.locals.adminBookingQuery
+      );
+
+      res.status(200).json({
+        success: true,
+        ...result,
+      });
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  /**
+   * Admin: dashboard aggregates
+   * GET /api/v1/bookings/admin/dashboard
+   */
+  getAdminDashboard = async (
+    _req: Request,
+    res: Response<unknown, AdminDashboardQueryLocals>,
+    next: NextFunction
+  ): Promise<void> => {
+    try {
+      const stats = await this.bookingService.getAdminDashboard(res.locals.adminDashboardDays);
+
+      res.status(200).json({
+        success: true,
+        data: stats,
       });
     } catch (error) {
       next(error);

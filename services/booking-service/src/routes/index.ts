@@ -1,7 +1,13 @@
 import { Router, IRouter } from 'express';
 import { BookingController } from '../controllers/booking.controller';
 import { SeatController } from '../controllers/seat.controller';
-import { authMiddleware, optionalAuth } from '../middlewares/auth.middleware';
+import {
+  authMiddleware,
+  optionalAuth,
+  adminOnly,
+  operatorOrAdmin,
+} from '../middlewares/auth.middleware';
+import { internalKeyMiddleware } from '../middlewares/internal-key.middleware';
 import {
   validateBody,
   createBookingSchema,
@@ -10,6 +16,10 @@ import {
   holdSeatsSchema,
   validateSeatsSchema,
 } from '../validators/booking.validator';
+import {
+  validateAdminBookingQuery,
+  validateAdminDashboardQuery,
+} from '../validators/admin-booking.validator';
 
 const router: IRouter = Router();
 const bookingController = new BookingController();
@@ -18,6 +28,35 @@ const seatController = new SeatController();
 // =====================================================
 // BOOKING ROUTES
 // =====================================================
+
+/**
+ * @route   GET /api/v1/bookings/admin/all
+ * @desc    List all bookings for the admin console (paginated, Shape 1)
+ * @access  Private (ADMIN sees all; OPERATOR is scoped to their own routes)
+ *
+ * Registered before `/bookings/:id` so the literal `admin` segment is not
+ * swallowed by the uuid parameter route.
+ */
+router.get(
+  '/bookings/admin/all',
+  authMiddleware,
+  operatorOrAdmin,
+  validateAdminBookingQuery,
+  bookingController.getAdminBookings
+);
+
+/**
+ * @route   GET /api/v1/bookings/admin/dashboard
+ * @desc    Aggregated booking/revenue stats for the admin dashboard
+ * @access  Private (ADMIN only)
+ */
+router.get(
+  '/bookings/admin/dashboard',
+  authMiddleware,
+  adminOnly,
+  validateAdminDashboardQuery,
+  bookingController.getAdminDashboard
+);
 
 /**
  * @route   GET /api/v1/bookings/code/:code
@@ -71,15 +110,22 @@ router.post(
 /**
  * @route   POST /api/v1/bookings/:id/confirm
  * @desc    Confirm a booking (internal API - called after payment)
- * @access  Internal (requires API key - TODO: implement)
+ * @access  Internal (requires x-internal-api-key; fail-closed when unset)
  */
 router.post(
   '/bookings/:id([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/confirm',
+  internalKeyMiddleware,
   bookingController.confirm
 );
 
+/**
+ * @route   POST /api/v1/bookings/:id/payment-failed
+ * @desc    Mark a booking's payment as failed (internal API - called by payment-service)
+ * @access  Internal (requires x-internal-api-key; fail-closed when unset)
+ */
 router.post(
   '/bookings/:id([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/payment-failed',
+  internalKeyMiddleware,
   bookingController.markPaymentFailed
 );
 
