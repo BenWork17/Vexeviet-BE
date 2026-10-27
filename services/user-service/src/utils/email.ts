@@ -66,7 +66,13 @@ export class EmailService {
   }
 
   async sendPasswordResetEmail(email: string, resetToken: string): Promise<void> {
-    const resetUrl = `${process.env.WEB_URL}/reset-password?token=${resetToken}`;
+    // `WEB_URL` is not in `.env.example`, so a fresh clone previously produced
+    // `undefined/reset-password?token=…`. The fallback is the customer web app's
+    // dev origin: `D:\Vexeviet\Vexeonline_v1\apps\web\package.json:6` runs
+    // `next dev -p 8081` (the admin console is 8082, and a reset link targets
+    // the customer, not the operator).
+    const webUrl = (process.env.WEB_URL || 'http://localhost:8081').replace(/\/+$/, '');
+    const resetUrl = `${webUrl}/reset-password?token=${resetToken}`;
     const html = `
       <h1>Đặt lại mật khẩu VeXeViet</h1>
       <p>Nhấn vào link sau để đặt lại mật khẩu:</p>

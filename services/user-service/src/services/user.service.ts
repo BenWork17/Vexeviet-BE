@@ -1,7 +1,9 @@
 import { writeAuditLog } from '@vexeviet/database';
 import { UserRole, UserStatus } from '@prisma/client';
 import { AdminResendVerificationResult, AdminUser, Pagination, User } from '../types';
+import { emailService } from '../utils/email';
 import { otpService } from './otp.service';
+import { passwordResetService } from './password-reset.service';
 import {
   AdminUserFilters,
   AdminUserRow,
@@ -12,6 +14,17 @@ import {
 export interface AdminUserPage {
   items: AdminUser[];
   pagination: Pagination;
+}
+
+/**
+ * Response of `POST /users/admin/:id/reset-password`.
+ *
+ * Carries the expiry only. The raw token goes into the email and nowhere else:
+ * a token in a response body is one copy-paste away from a leak, in every
+ * environment including development.
+ */
+export interface AdminResetPasswordResult {
+  expiresAt: string;
 }
 
 /** The acting admin, taken from the JWT (and resolved to a display name). */
@@ -279,6 +292,69 @@ export class UserService {
     }
 
     return { id, message: 'Verification code sent to email' };
+  }
+
+  /**
+   * Admin-initiated password reset (`Reset mật khẩu` on the Users screen).
+   *
+   * Mints a single-use token, stores only `hashSHA256(token)` in Redis with a
+   * 1-hour TTL, and mails the link. The raw token never leaves this method —
+   * the caller receives the expiry only.
+   *
+   * 404 for an unknown row, deliberately: this is an admin-only endpoint, so the
+   * caller is authenticated and already authorised to enumerate users through
+   * `GET /users/admin/all`. The contract's "missing row → 404" rule applies and
+   * hiding the miss would be an inconsistent lie to the console. The
+   * *enumerable* surface is the public forgot-password route, which is uniform.
+   *
+   * 502 when the mail cannot be sent, matching `resendVerification`: the request
+   * was well-formed and authorised, the upstream delivery failed, and the admin
+   * needs to know the link did not go out.
+   */
+  async resetPassword(id: string, actor: AuditActor): Promise<AdminResetPasswordResult> {
+    const target = await this.userRepo.findById(id);
+
+    if (!target) {
+      throw new UserServiceError('User not found', 404);
+    }
+
+    if (!target.email) {
+      throw new UserServiceError('User has no email address to send to', 409);
+    }
+
+    const { token, expiresAt } = await passwordResetService.issue(target.id);
+
+    let deliverySucceeded = false;
+    try {
+      await emailService.sendPasswordResetEmail(target.email, token);
+      deliverySucceeded = true;
+    } catch (error) {
+      console.error('[user-service] failed to send password reset email', {
+        userId: target.id,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+
+    const actorName = await this.resolveActorName(actor);
+
+    await this.emitAudit({
+      actorId: actor.userId,
+      actorName,
+      actorRole: 'ADMIN',
+      action: 'USER_PASSWORD_RESET_REQUESTED',
+      target: `user:${target.email}`,
+      targetId: target.id,
+      severity: 'WARNING',
+      // No token, no hash, no password. Only who initiated it and whether the
+      // mail went out.
+      metadata: { initiatedBy: 'ADMIN', deliverySucceeded },
+    });
+
+    if (!deliverySucceeded) {
+      throw new UserServiceError('Failed to send password reset email', 502);
+    }
+
+    return { expiresAt: expiresAt.toISOString() };
   }
 
   /**

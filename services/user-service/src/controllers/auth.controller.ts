@@ -1,9 +1,21 @@
 import { Request, Response } from 'express';
-import { AuthService } from '../services/auth.service';
+import { AuthService, AuthServiceError } from '../services/auth.service';
 import { otpService } from '../services/otp.service';
 import { RegisterRequest, LoginRequest, VerifyOTPRequest, ResendOTPRequest } from '../types';
 import { eventPublisher } from '../events/publisher';
 import { createUserRegisteredEvent } from '../events/user.events';
+
+/**
+ * The one body both `forgot-password` branches return. Identical for a known and
+ * an unknown address — that is what makes the endpoint non-enumerable, so it
+ * must not gain any conditional field.
+ */
+const FORGOT_PASSWORD_ACCEPTED = {
+  success: true,
+  data: {
+    message: 'If an account exists for that email, a password reset link has been sent',
+  },
+} as const;
 
 export class AuthController {
   private authService: AuthService;
@@ -144,6 +156,56 @@ export class AuthController {
       res.status(400).json({
         success: false,
         error: error instanceof Error ? error.message : 'Resend failed',
+      });
+    }
+  };
+
+  /**
+   * POST /api/v1/auth/forgot-password (public)
+   *
+   * Always 200 with the same body: an unknown address must be indistinguishable
+   * from a known one. A transport failure is swallowed for the same reason.
+   */
+  forgotPassword = async (req: Request, res: Response): Promise<void> => {
+    try {
+      const { email } = req.body as { email: string };
+      await this.authService.forgotPassword(email);
+    } catch (error) {
+      // Swallowed on purpose: a distinct status here would leak account
+      // existence. Anything unexpected is logged without the address.
+      console.error('[auth] forgot-password failed', {
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+
+    res.status(200).json(FORGOT_PASSWORD_ACCEPTED);
+  };
+
+  /**
+   * POST /api/v1/auth/reset-password (public)
+   *
+   * Unknown, expired and already-used tokens all produce the same 400 naming
+   * `token`, so the three states cannot be told apart.
+   */
+  resetPassword = async (req: Request, res: Response): Promise<void> => {
+    try {
+      const { token, newPassword } = req.body as { token: string; newPassword: string };
+      await this.authService.resetPassword(token, newPassword);
+      res.status(200).json({
+        success: true,
+        data: { message: 'Password has been reset. Please sign in again.' },
+      });
+    } catch (error) {
+      if (error instanceof AuthServiceError) {
+        res.status(error.statusCode).json({
+          success: false,
+          error: error.message,
+        });
+        return;
+      }
+      res.status(500).json({
+        success: false,
+        error: error instanceof Error ? error.message : 'Failed to reset password',
       });
     }
   };

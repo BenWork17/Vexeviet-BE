@@ -1,5 +1,16 @@
 import { z } from 'zod';
 
+/**
+ * The canonical password policy (registration). Exported so a password reset
+ * cannot accept anything registration would reject — reuse, never duplicate.
+ */
+export const passwordSchema = z
+  .string()
+  .min(8, 'Password must be at least 8 characters')
+  .regex(/[A-Z]/, 'Password must contain at least one uppercase letter')
+  .regex(/[a-z]/, 'Password must contain at least one lowercase letter')
+  .regex(/[0-9]/, 'Password must contain at least one number');
+
 export const registerSchema = z
   .object({
     method: z.enum(['email', 'phone'], {
@@ -10,12 +21,7 @@ export const registerSchema = z
       .string()
       .regex(/^\+84[0-9]{9,10}$/, 'Invalid Vietnamese phone number format (+84xxxxxxxxx)')
       .optional(),
-    password: z
-      .string()
-      .min(8, 'Password must be at least 8 characters')
-      .regex(/[A-Z]/, 'Password must contain at least one uppercase letter')
-      .regex(/[a-z]/, 'Password must contain at least one lowercase letter')
-      .regex(/[0-9]/, 'Password must contain at least one number'),
+    password: passwordSchema,
     firstName: z
       .string()
       .min(2, 'First name must be at least 2 characters')
@@ -57,4 +63,18 @@ export const verifyOtpSchema = z.object({
 
 export const resendOtpSchema = z.object({
   userId: z.string().uuid('Invalid user ID'),
+});
+
+/** Public `POST /auth/forgot-password`. Only the address is accepted. */
+export const forgotPasswordSchema = z.object({
+  email: z.string().email('Invalid email format'),
+});
+
+/**
+ * Public `POST /auth/reset-password`. The password rule is the registration
+ * rule, so a reset can never set something registration would reject.
+ */
+export const resetPasswordSchema = z.object({
+  token: z.string().min(1, 'Reset token is required'),
+  newPassword: passwordSchema,
 });

@@ -188,4 +188,44 @@ export class UserController {
       });
     }
   };
+
+  /**
+   * POST /api/v1/users/admin/:id/reset-password (ADMIN)
+   *
+   * 200 with `{ expiresAt }` only — never the token. 404 unknown id, 400
+   * malformed uuid, 409 when the row has no email, 502 when the mail send fails.
+   */
+  resetPassword = async (req: AuthRequest, res: Response): Promise<void> => {
+    const { id } = req.params;
+    if (!id || !isUuid(id)) {
+      res.status(400).json({
+        success: false,
+        error: 'id must be a valid uuid',
+      });
+      return;
+    }
+
+    try {
+      const result = await this.userService.resetPassword(id, {
+        userId: req.user!.userId,
+        email: req.user!.email,
+      });
+      res.status(200).json({
+        success: true,
+        data: result,
+      });
+    } catch (error) {
+      if (error instanceof UserServiceError) {
+        res.status(error.statusCode).json({
+          success: false,
+          error: error.message,
+        });
+        return;
+      }
+      res.status(500).json({
+        success: false,
+        error: error instanceof Error ? error.message : 'Failed to reset password',
+      });
+    }
+  };
 }
