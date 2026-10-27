@@ -1,7 +1,13 @@
 import { z } from 'zod';
 import { Request, Response, NextFunction } from 'express';
 import { BookingStatus, PaymentStatus } from '@vexeviet/database';
-import type { AdminBookingQuery, AdminBookingSort } from '../types';
+import type {
+  AdminBookingQuery,
+  AdminBookingSort,
+  AdminBookingNotesRequest,
+  AdminBulkCancelRequest,
+  AdminCancelBookingRequest,
+} from '../types';
 
 /**
  * Integer query param that is *clamped* rather than rejected when it is a
@@ -57,6 +63,71 @@ export const adminBookingQuerySchema = z.object({
 /** Query schema for `GET /api/v1/bookings/admin/dashboard` (days 1..90, default 7). */
 export const adminDashboardQuerySchema = z.object({
   days: clampedInt(1, 90, 7),
+});
+
+/**
+ * Upper bound for `Booking.notes` coming from the admin console.
+ *
+ * The column is `String? @db.Text`, so the database accepts ~64 KB and will not
+ * stop an oversized note. 2000 characters is far more than an internal
+ * operational note needs while bounding the request body, the row size and the
+ * cost of rendering the booking detail.
+ */
+export const ADMIN_BOOKING_NOTES_MAX_LENGTH = 2000;
+
+/** Upper bound for a bulk-cancel batch; an unbounded batch is a DB DoS lever. */
+export const ADMIN_BULK_CANCEL_MAX_IDS = 50;
+
+/** A stated reason is required: an admin cancellation without one is unauditable. */
+const adminCancelReason = z
+  .string({ required_error: 'reason is required' })
+  .trim()
+  .min(1, 'reason must not be empty')
+  .max(500, 'reason must be at most 500 characters');
+
+/** Body of `POST /api/v1/bookings/admin/:id/cancel`. */
+export const adminCancelBookingSchema = z.object({
+  reason: adminCancelReason,
+});
+
+/** Body of `POST /api/v1/bookings/admin/cancel` (bulk, 1..50 unique uuids). */
+export const adminBulkCancelSchema = z.object({
+  ids: z
+    .array(z.string().uuid('ids must contain uuids'), {
+      required_error: 'ids is required',
+      invalid_type_error: 'ids must be an array of uuids',
+    })
+    .min(1, 'ids must contain at least one booking id')
+    .max(
+      ADMIN_BULK_CANCEL_MAX_IDS,
+      `ids must contain at most ${ADMIN_BULK_CANCEL_MAX_IDS} booking ids`
+    )
+    .refine(ids => new Set(ids).size === ids.length, {
+      message: 'ids must not contain duplicates',
+    }),
+  reason: adminCancelReason,
+});
+
+/**
+ * Body of `PATCH /api/v1/bookings/admin/:id/notes`.
+ *
+ * `null` clears the note; a whitespace-only string is treated as a clear too,
+ * since an all-blank note carries no information and the column is nullable.
+ */
+export const adminBookingNotesSchema = z.object({
+  notes: z.union([
+    z
+      .string({ invalid_type_error: 'notes must be a string or null' })
+      .max(
+        ADMIN_BOOKING_NOTES_MAX_LENGTH,
+        `notes must be at most ${ADMIN_BOOKING_NOTES_MAX_LENGTH} characters`
+      )
+      .transform(value => {
+        const trimmed = value.trim();
+        return trimmed === '' ? null : trimmed;
+      }),
+    z.null(),
+  ]),
 });
 
 /** `res.locals` shape after `validateAdminBookingQuery` ran. */
@@ -131,3 +202,73 @@ export const validateAdminDashboardQuery = (
 
   next();
 };
+
+/** `res.locals` shape after `validateAdminCancelBody` ran. */
+export interface AdminCancelBodyLocals extends Record<string, unknown> {
+  adminCancelBody: AdminCancelBookingRequest;
+}
+
+/** `res.locals` shape after `validateAdminBulkCancelBody` ran. */
+export interface AdminBulkCancelBodyLocals extends Record<string, unknown> {
+  adminBulkCancelBody: AdminBulkCancelRequest;
+}
+
+/** `res.locals` shape after `validateAdminBookingNotesBody` ran. */
+export interface AdminBookingNotesBodyLocals extends Record<string, unknown> {
+  adminBookingNotesBody: AdminBookingNotesRequest;
+}
+
+/**
+ * Respond 400 in the service's existing error envelope, naming each offending
+ * body field.
+ *
+ * The admin action endpoints validate their body here rather than through the
+ * shared `validateBody`, because the parsed (trimmed/transformed) value must
+ * reach the controller; `validateBody` only parses and discards the result.
+ */
+const sendBodyError = (res: Response, issues: z.ZodIssue[]): void => {
+  res.status(400).json({
+    success: false,
+    error: {
+      code: 'VALIDATION_ERROR',
+      message: 'Invalid request data',
+      details: issues.map(issue => ({
+        field: issue.path.join('.'),
+        message: issue.message,
+      })),
+    },
+  });
+};
+
+/** Build a body-validation middleware that stores the parsed value on `res.locals[key]`. */
+const validateAdminBody =
+  <T>(schema: z.ZodSchema<T, z.ZodTypeDef, unknown>, key: string) =>
+  function adminBodyValidator(req: Request, res: Response, next: NextFunction): void {
+    const result = schema.safeParse(req.body);
+
+    if (!result.success) {
+      sendBodyError(res, result.error.errors);
+      return;
+    }
+
+    res.locals[key] = result.data;
+    next();
+  };
+
+/** Validate the admin single-cancel body → `res.locals.adminCancelBody`. */
+export const validateAdminCancelBody = validateAdminBody<AdminCancelBookingRequest>(
+  adminCancelBookingSchema,
+  'adminCancelBody'
+);
+
+/** Validate the admin bulk-cancel body → `res.locals.adminBulkCancelBody`. */
+export const validateAdminBulkCancelBody = validateAdminBody<AdminBulkCancelRequest>(
+  adminBulkCancelSchema,
+  'adminBulkCancelBody'
+);
+
+/** Validate the admin notes body → `res.locals.adminBookingNotesBody`. */
+export const validateAdminBookingNotesBody = validateAdminBody<AdminBookingNotesRequest>(
+  adminBookingNotesSchema,
+  'adminBookingNotesBody'
+);

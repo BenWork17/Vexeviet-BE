@@ -312,3 +312,61 @@ export interface AdminDashboardStats {
   revenueTrend: DashboardPoint[];
   bookingStatusSummary: DashboardPoint[];
 }
+
+// =====================================================
+// ADMIN BOOKING ACTIONS (cancel / bulk cancel / notes)
+// =====================================================
+
+/** Body of `POST /bookings/admin/:id/cancel`. */
+export interface AdminCancelBookingRequest {
+  reason: string;
+}
+
+/** Body of `POST /bookings/admin/cancel` (bulk). */
+export interface AdminBulkCancelRequest {
+  ids: string[];
+  reason: string;
+}
+
+/** Body of `PATCH /bookings/admin/:id/notes`; `null` clears the note. */
+export interface AdminBookingNotesRequest {
+  notes: string | null;
+}
+
+/**
+ * Per-item failure codes for a bulk cancel.
+ *
+ * Deliberately the service's existing error vocabulary (the codes its error
+ * classes already emit) rather than a parallel set.
+ */
+export type AdminBulkCancelErrorCode = 'NOT_FOUND' | 'CONFLICT';
+
+/** One successful item of a bulk cancel. */
+export interface AdminBulkCancelItemSuccess {
+  id: string;
+  ok: true;
+  status: 'CANCELLED';
+}
+
+/** One failed item of a bulk cancel; the rest of the batch still runs. */
+export interface AdminBulkCancelItemFailure {
+  id: string;
+  ok: false;
+  code: AdminBulkCancelErrorCode;
+  message: string;
+}
+
+export type AdminBulkCancelItem = AdminBulkCancelItemSuccess | AdminBulkCancelItemFailure;
+
+/** Totals for a bulk cancel. */
+export interface AdminBulkCancelSummary {
+  requested: number;
+  cancelled: number;
+  failed: number;
+}
+
+/** `data` payload of `POST /bookings/admin/cancel`. */
+export interface AdminBulkCancelResponse {
+  results: AdminBulkCancelItem[];
+  summary: AdminBulkCancelSummary;
+}

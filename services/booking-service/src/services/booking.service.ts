@@ -1,7 +1,12 @@
 import { v4 as uuidv4 } from 'uuid';
 import { customAlphabet } from 'nanoid';
 import { config } from '../config';
-import { BookingRepository, type AdminBookingRow } from '../repositories/booking.repository';
+import {
+  BookingRepository,
+  type AdminBookingRow,
+  type AdminCancelTargetRow,
+  type BookingDetailRow,
+} from '../repositories/booking.repository';
 import { SeatRepository } from '../repositories/seat.repository';
 import {
   prisma,
@@ -23,6 +28,8 @@ import {
   AdminBooking,
   AdminBookingQuery,
   AdminDashboardStats,
+  AdminBulkCancelItem,
+  AdminBulkCancelResponse,
   DashboardPoint,
 } from '../types';
 import {
@@ -513,6 +520,297 @@ export class BookingService {
       operatorCount,
       revenueTrend,
       bookingStatusSummary,
+    };
+  }
+
+  // =====================================================
+  // ADMIN ACTIONS
+  // =====================================================
+
+  /**
+   * Cancel any booking on behalf of an ADMIN.
+   *
+   * Deliberately a *separate* method from `cancelBooking`: the customer path
+   * hides the existence of other users' bookings (`booking.userId !== userId` →
+   * `NotFoundError`) and that security property must not be relaxed for
+   * `POST /bookings/:id/cancel`. This path has no ownership check at all, which
+   * is exactly why it is reachable only behind `adminOnly`.
+   *
+   * Status rules are the same ones the customer path applies.
+   */
+  async cancelBookingAsAdmin(
+    bookingId: string,
+    actor: TokenPayload,
+    reason: string
+  ): Promise<BookingDetailResponse> {
+    const booking = await this.bookingRepo.findById(bookingId);
+
+    if (!booking) {
+      throw new NotFoundError('Booking', bookingId);
+    }
+
+    if (booking.status === BookingStatus.CANCELLED) {
+      throw new ConflictError('Booking is already cancelled');
+    }
+
+    if (booking.status === BookingStatus.COMPLETED) {
+      throw new ConflictError('Cannot cancel completed booking');
+    }
+
+    const previousStatus = booking.status;
+
+    let updatedBooking: BookingDetailRow;
+
+    try {
+      updatedBooking = await this.bookingRepo.cancelAsAdmin(bookingId, previousStatus, reason);
+    } catch (error) {
+      // P2025: the row no longer matches `{ id, status: previousStatus }` — it
+      // moved on between the read above and this write. Report a conflict
+      // rather than claim a cancellation that did not happen.
+      if (this.isRecordNotFound(error)) {
+        throw new ConflictError('Booking status changed before it could be cancelled');
+      }
+
+      throw error;
+    }
+
+    await this.seatRepo.releaseSeatsByBookingId(bookingId);
+
+    // Emitted after the write succeeded; `writeAuditLog` never throws.
+    const auditActor = await this.resolveAuditActor(actor);
+
+    await writeAuditLog({
+      actorId: auditActor.actorId,
+      actorName: auditActor.actorName,
+      actorRole: auditActor.actorRole,
+      action: 'BOOKING_CANCELLED',
+      target: `booking:${booking.bookingCode}`,
+      targetId: booking.id,
+      severity: 'WARNING',
+      metadata: {
+        bookingCode: booking.bookingCode,
+        previousStatus,
+        reason,
+        adminOverride: true,
+      },
+    });
+
+    return this.formatBookingDetailResponse(updatedBooking);
+  }
+
+  /**
+   * Cancel a batch of bookings on behalf of an ADMIN.
+   *
+   * Per-item and independent: one conflict never aborts the rest. Work is
+   * bounded — one `findMany` for the whole batch, then a single transaction
+   * that cancels every eligible row and releases their seats together.
+   */
+  async cancelBookingsAsAdmin(
+    ids: string[],
+    actor: TokenPayload,
+    reason: string
+  ): Promise<AdminBulkCancelResponse> {
+    const targets = await this.bookingRepo.findCancelTargets(ids);
+    const targetById = new Map(targets.map(target => [target.id, target]));
+
+    const results = new Map<string, AdminBulkCancelItem>();
+    const cancellable: AdminCancelTargetRow[] = [];
+
+    for (const id of ids) {
+      const target = targetById.get(id);
+
+      if (!target) {
+        results.set(id, {
+          id,
+          ok: false,
+          code: 'NOT_FOUND',
+          message: 'Booking not found',
+        });
+        continue;
+      }
+
+      if (target.status === BookingStatus.CANCELLED) {
+        results.set(id, {
+          id,
+          ok: false,
+          code: 'CONFLICT',
+          message: 'Booking is already cancelled',
+        });
+        continue;
+      }
+
+      if (target.status === BookingStatus.COMPLETED) {
+        results.set(id, {
+          id,
+          ok: false,
+          code: 'CONFLICT',
+          message: 'Cannot cancel completed booking',
+        });
+        continue;
+      }
+
+      cancellable.push(target);
+    }
+
+    if (cancellable.length > 0) {
+      const { cancelledIds, skippedIds } = await this.bookingRepo.cancelManyAsAdmin(
+        cancellable,
+        reason
+      );
+
+      if (cancelledIds.length > 0) {
+        const auditActor = await this.resolveAuditActor(actor);
+
+        for (const id of cancelledIds) {
+          const target = targetById.get(id);
+
+          if (!target) {
+            continue;
+          }
+
+          results.set(id, { id, ok: true, status: 'CANCELLED' });
+
+          // One audit row per cancelled booking, so the trail names every
+          // booking rather than just the batch.
+          await writeAuditLog({
+            actorId: auditActor.actorId,
+            actorName: auditActor.actorName,
+            actorRole: auditActor.actorRole,
+            action: 'BOOKING_CANCELLED',
+            target: `booking:${target.bookingCode}`,
+            targetId: target.id,
+            severity: 'WARNING',
+            metadata: {
+              bookingCode: target.bookingCode,
+              previousStatus: target.status,
+              reason,
+              adminOverride: true,
+            },
+          });
+        }
+      }
+
+      // Raced away between the classification read and the guarded update:
+      // this call did not cancel it, so it is reported, not audited.
+      for (const id of skippedIds) {
+        results.set(id, {
+          id,
+          ok: false,
+          code: 'CONFLICT',
+          message: 'Booking status changed before it could be cancelled',
+        });
+      }
+    }
+
+    const ordered = ids
+      .map(id => results.get(id))
+      .filter((item): item is AdminBulkCancelItem => item !== undefined);
+
+    const cancelled = ordered.filter(item => item.ok).length;
+    const failed = ordered.filter(item => !item.ok).length;
+
+    return {
+      results: ordered,
+      summary: {
+        requested: ids.length,
+        cancelled,
+        failed,
+      },
+    };
+  }
+
+  /**
+   * Set or clear the internal note on a booking.
+   *
+   * Only `Booking.notes` is written — status, payment status, seats and money
+   * are untouched, so this cannot move a booking through its lifecycle.
+   */
+  async updateBookingNotesAsAdmin(
+    bookingId: string,
+    actor: TokenPayload,
+    notes: string | null
+  ): Promise<BookingDetailResponse> {
+    const booking = await this.bookingRepo.findById(bookingId);
+
+    if (!booking) {
+      throw new NotFoundError('Booking', bookingId);
+    }
+
+    const previousNotesChanged = (booking.notes ?? null) !== notes;
+
+    const updatedBooking = await this.bookingRepo.updateNotes(bookingId, notes);
+
+    const auditActor = await this.resolveAuditActor(actor);
+
+    // The note text is deliberately absent from metadata: it is operator
+    // free-text that may contain customer data, and the booking row holds it.
+    await writeAuditLog({
+      actorId: auditActor.actorId,
+      actorName: auditActor.actorName,
+      actorRole: auditActor.actorRole,
+      action: 'BOOKING_NOTE_UPDATED',
+      target: `booking:${booking.bookingCode}`,
+      targetId: booking.id,
+      severity: 'INFO',
+      metadata: {
+        bookingCode: booking.bookingCode,
+        previousNotesChanged,
+      },
+    });
+
+    return this.formatBookingDetailResponse(updatedBooking);
+  }
+
+  /**
+   * True when `error` is Prisma's P2025 ("record to update not found").
+   *
+   * Duck-typed rather than `instanceof Prisma.PrismaClientKnownRequestError` so
+   * it still holds if the generated client is duplicated in the module graph
+   * (a second copy makes `instanceof` silently false).
+   */
+  private isRecordNotFound(error: unknown): boolean {
+    return (
+      typeof error === 'object' &&
+      error !== null &&
+      'code' in error &&
+      (error as { code?: unknown }).code === 'P2025'
+    );
+  }
+
+  /**
+   * Audit actor snapshot for an admin action.
+   *
+   * `writeAuditLog` silently drops rows with a null `actorName`, so the name
+   * falls back full name → account email → token email and is never empty.
+   * Resolved once per request, not once per batch item.
+   *
+   * The lookup is best-effort: it runs *after* the business write has committed,
+   * so a failure here falls back to the token's email rather than turning a
+   * successful cancellation into a 500.
+   */
+  private async resolveAuditActor(
+    actor: TokenPayload
+  ): Promise<{ actorId: string; actorName: string; actorRole: string }> {
+    let user: Awaited<ReturnType<BookingRepository['findActorName']>> = null;
+
+    try {
+      user = await this.bookingRepo.findActorName(actor.userId);
+    } catch (error) {
+      console.error('[audit] failed to resolve actor name; falling back to token email', {
+        actorId: actor.userId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+
+    const fullName = [user?.firstName, user?.lastName]
+      .filter((part): part is string => Boolean(part && part.trim()))
+      .join(' ')
+      .trim();
+
+    return {
+      actorId: actor.userId,
+      actorName: fullName || user?.email || actor.email,
+      actorRole: actor.role,
     };
   }
 

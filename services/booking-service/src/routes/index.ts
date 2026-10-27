@@ -19,6 +19,9 @@ import {
 import {
   validateAdminBookingQuery,
   validateAdminDashboardQuery,
+  validateAdminCancelBody,
+  validateAdminBulkCancelBody,
+  validateAdminBookingNotesBody,
 } from '../validators/admin-booking.validator';
 
 const router: IRouter = Router();
@@ -56,6 +59,53 @@ router.get(
   adminOnly,
   validateAdminDashboardQuery,
   bookingController.getAdminDashboard
+);
+
+/** UUID path-parameter constraint, matching the sibling customer routes. */
+const UUID_PARAM = '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}';
+
+/**
+ * @route   POST /api/v1/bookings/admin/cancel
+ * @desc    Cancel a batch of bookings in one request (per-item outcomes)
+ * @access  Private (ADMIN only)
+ *
+ * Registered **before** `/bookings/admin/:id/cancel`. Two independent
+ * mechanisms keep `cancel` from being read as an `:id`: this ordering, and the
+ * uuid constraint on `:id` below (a literal `cancel` cannot match the uuid
+ * pattern). Neither alone is relied upon silently — see the router dump.
+ */
+router.post(
+  '/bookings/admin/cancel',
+  authMiddleware,
+  adminOnly,
+  validateAdminBulkCancelBody,
+  bookingController.adminBulkCancel
+);
+
+/**
+ * @route   POST /api/v1/bookings/admin/:id/cancel
+ * @desc    Cancel any booking on behalf of an ADMIN, with a stated reason
+ * @access  Private (ADMIN only)
+ */
+router.post(
+  `/bookings/admin/:id(${UUID_PARAM})/cancel`,
+  authMiddleware,
+  adminOnly,
+  validateAdminCancelBody,
+  bookingController.adminCancel
+);
+
+/**
+ * @route   PATCH /api/v1/bookings/admin/:id/notes
+ * @desc    Set (or clear, with `null`) the internal note on a booking
+ * @access  Private (ADMIN only)
+ */
+router.patch(
+  `/bookings/admin/:id(${UUID_PARAM})/notes`,
+  authMiddleware,
+  adminOnly,
+  validateAdminBookingNotesBody,
+  bookingController.adminNotes
 );
 
 /**

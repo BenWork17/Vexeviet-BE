@@ -1,4 +1,4 @@
-import { prisma, Prisma, Booking, BookingStatus, PaymentStatus, RouteStatus, UserRole, UserStatus } from '@vexeviet/database';
+import { prisma, Prisma, Booking, BookingStatus, PaymentStatus, RouteStatus, SeatStatus, UserRole, UserStatus } from '@vexeviet/database';
 
 /**
  * Relations loaded for the admin booking list.
@@ -58,6 +58,60 @@ const adminBookingInclude = {
 export type AdminBookingRow = Prisma.BookingGetPayload<{
   include: typeof adminBookingInclude;
 }>;
+
+/**
+ * Relations loaded whenever a booking is returned as a detail response.
+ *
+ * Shared by the read paths and the admin notes write, so an update can return
+ * the same shape as a read in a single round-trip instead of write-then-refetch.
+ */
+const bookingDetailInclude = {
+  user: {
+    select: {
+      id: true,
+      email: true,
+      firstName: true,
+      lastName: true,
+      phone: true,
+    },
+  },
+  route: {
+    select: {
+      id: true,
+      name: true,
+      origin: true,
+      destination: true,
+      departureLocation: true,
+      arrivalLocation: true,
+      departureTime: true,
+      arrivalTime: true,
+      duration: true,
+      busType: true,
+      price: true,
+      operator: {
+        select: {
+          id: true,
+          firstName: true,
+          lastName: true,
+        },
+      },
+    },
+  },
+  passengers: true,
+  seats: true,
+} satisfies Prisma.BookingInclude;
+
+/** A booking row as loaded for a detail response. */
+export type BookingDetailRow = Prisma.BookingGetPayload<{
+  include: typeof bookingDetailInclude;
+}>;
+
+/** The fields a cancel action needs from a booking, plus its booking code. */
+export interface AdminCancelTargetRow {
+  id: string;
+  bookingCode: string;
+  status: BookingStatus;
+}
 
 /** One day bucket of completed-payment revenue. */
 export interface RevenueTrendRow {
@@ -441,6 +495,136 @@ export class BookingRepository {
   async countActiveOperators(): Promise<number> {
     return prisma.user.count({
       where: { role: UserRole.OPERATOR, status: UserStatus.ACTIVE },
+    });
+  }
+
+  // =====================================================
+  // ADMIN WRITE PATHS
+  // =====================================================
+
+  /**
+   * Display name for the audit row of an admin action.
+   *
+   * One select, called once per request (not per batch item). `null` when the
+   * user row is gone; the caller then falls back to the token's email, because
+   * `writeAuditLog` silently drops rows with a null `actorName`.
+   */
+  async findActorName(
+    userId: string
+  ): Promise<{ firstName: string | null; lastName: string | null; email: string } | null> {
+    return prisma.user.findUnique({
+      where: { id: userId },
+      select: { firstName: true, lastName: true, email: true },
+    });
+  }
+
+  /**
+   * Cancel one booking on behalf of an admin and return the full detail row.
+   *
+   * `expectedStatus` is part of the `where`, so the write is atomic with the
+   * caller's read: if the row moved on in between (say a payment confirmed or
+   * completed it), nothing is written and Prisma raises P2025 instead of
+   * cancelling a booking whose state the caller never saw. The service maps that
+   * to a conflict.
+   *
+   * The detail relations are included so the response needs no refetch.
+   */
+  async cancelAsAdmin(
+    bookingId: string,
+    expectedStatus: BookingStatus,
+    reason: string
+  ): Promise<BookingDetailRow> {
+    return prisma.booking.update({
+      where: { id: bookingId, status: expectedStatus },
+      data: {
+        status: BookingStatus.CANCELLED,
+        cancelledAt: new Date(),
+        cancellationReason: reason,
+      },
+      include: bookingDetailInclude,
+    });
+  }
+
+  /**
+   * Set or clear `Booking.notes` and return the fresh detail row.
+   *
+   * Only `notes` is written: status, payment status, seats and money are
+   * untouched by construction.
+   */
+  async updateNotes(bookingId: string, notes: string | null): Promise<BookingDetailRow> {
+    return prisma.booking.update({
+      where: { id: bookingId },
+      data: { notes },
+      include: bookingDetailInclude,
+    });
+  }
+
+  /**
+   * Load the cancel-relevant fields for a batch of booking ids.
+   *
+   * One query for the whole batch — never a `findById` per id.
+   */
+  async findCancelTargets(ids: string[]): Promise<AdminCancelTargetRow[]> {
+    return prisma.booking.findMany({
+      where: { id: { in: ids } },
+      select: { id: true, bookingCode: true, status: true },
+    });
+  }
+
+  /**
+   * Cancel a batch of bookings in one transaction.
+   *
+   * Each row is updated with `where: { id, status: <status we read> }`, so an
+   * update only lands if the row is still in the state the caller classified.
+   * That guard is what makes the audit trail truthful: a booking cancelled by a
+   * concurrent writer between the read and this write returns `count: 0` and is
+   * reported as skipped instead of being claimed by this admin.
+   *
+   * A single guarded `updateMany` would cost one statement but cannot say
+   * *which* rows it transitioned when the count comes up short, so it could
+   * attribute another admin's cancellation to this actor, with a reason that
+   * never reached the row.
+   *
+   * Statements: one `updateMany` per target (≤50, primary-key equality) plus one
+   * `deleteMany` releasing the seats of the rows that did transition. All inside
+   * one transaction, so status and seats cannot diverge.
+   */
+  async cancelManyAsAdmin(
+    targets: AdminCancelTargetRow[],
+    reason: string
+  ): Promise<{ cancelledIds: string[]; skippedIds: string[] }> {
+    return prisma.$transaction(async tx => {
+      const cancelledIds: string[] = [];
+      const skippedIds: string[] = [];
+      const cancelledAt = new Date();
+
+      for (const target of targets) {
+        const updated = await tx.booking.updateMany({
+          where: { id: target.id, status: target.status },
+          data: {
+            status: BookingStatus.CANCELLED,
+            cancelledAt,
+            cancellationReason: reason,
+          },
+        });
+
+        if (updated.count === 1) {
+          cancelledIds.push(target.id);
+        } else {
+          skippedIds.push(target.id);
+        }
+      }
+
+      if (cancelledIds.length > 0) {
+        await tx.bookingSeat.deleteMany({
+          where: {
+            bookingId: { in: cancelledIds },
+            status: { in: [SeatStatus.HELD, SeatStatus.BOOKED] },
+          },
+        });
+      }
+
+      return { cancelledIds, skippedIds };
     });
   }
 
