@@ -405,9 +405,11 @@ export class PaymentService {
     const now = new Date();
     const from = startOfDay(addDays(now, -(days - 1)));
 
-    // Summary is ADMIN-only, so the window is never operator-scoped.
+    // Summary is ADMIN-only, so the window is never operator-scoped. Both bounds
+    // are required: without the upper bound a future-dated row would be counted in
+    // `totalCompleted`/`countByStatus` but dropped by the zero-filled trend.
     const windowWhere: Prisma.PaymentWhereInput = {
-      createdAt: { gte: from },
+      createdAt: { gte: from, lte: endOfDay(now) },
     };
 
     const [grouped, completedPoints] = await Promise.all([
