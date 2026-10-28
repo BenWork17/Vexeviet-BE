@@ -261,13 +261,16 @@ router.post(
 // Registered after the customer `/seats/*` literals. There is no
 // `/seats/:id` parameter route, so no literal-vs-parameter collision is
 // possible here (the only parameterised routes are under `/bookings`). Both
-// paths are ADMIN-only: `authMiddleware` establishes the token and `adminOnly`
-// rejects any role other than ADMIN.
+// paths admit ADMIN and OPERATOR: `authMiddleware` establishes the token and
+// `operatorOrAdmin` rejects any other role. The role check is only half the
+// guard — `SeatService.blockSeats`/`unblockSeats` additionally require the
+// route's `operatorId` to match the token for an OPERATOR, so this middleware
+// being permissive for operators cannot reach a route they do not own.
 
 /**
  * @route   POST /api/v1/seats/admin/block
  * @desc    Block specific seats for one route/date (maintenance)
- * @access  Private (ADMIN only)
+ * @access  Private (ADMIN or OPERATOR owning the route)
  *
  * `POST` rather than `PUT`: the operation adds maintenance state to a set of
  * seats, and the same body shape is reused by the unblock route below.
@@ -275,7 +278,7 @@ router.post(
 router.post(
   '/seats/admin/block',
   authMiddleware,
-  adminOnly,
+  operatorOrAdmin,
   validateAdminSeatBlockBody,
   seatController.adminBlockSeats
 );
@@ -283,7 +286,7 @@ router.post(
 /**
  * @route   POST /api/v1/seats/admin/unblock
  * @desc    Remove a maintenance block from specific seats for one route/date
- * @access  Private (ADMIN only)
+ * @access  Private (ADMIN or OPERATOR owning the route)
  *
  * `POST`, not `DELETE` with a body: `DELETE` bodies are legal but are dropped by
  * some proxies and intermediaries (the API gateway is an `http-proxy-middleware`
@@ -294,7 +297,7 @@ router.post(
 router.post(
   '/seats/admin/unblock',
   authMiddleware,
-  adminOnly,
+  operatorOrAdmin,
   validateAdminSeatUnblockBody,
   seatController.adminUnblockSeats
 );

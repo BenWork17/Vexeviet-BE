@@ -15,6 +15,33 @@ import { NotFoundError, SeatsUnavailableError } from '../middlewares/error.middl
 import { config } from '../config';
 import { v4 as uuidv4 } from 'uuid';
 
+/**
+ * May this actor take maintenance action on this route's seats?
+ *
+ * The same three-branch shape as payment-service's `canAccessBooking`: ADMIN is
+ * unrestricted, OPERATOR is confined to routes it operates, and any other role
+ * is refused outright rather than by coincidence of id equality. Scoping is
+ * derived from the token alone — no request field takes part.
+ *
+ * Pure and exported so the ownership truth table can be exercised without a
+ * database; it reads only the already-loaded route row, so the caller needs no
+ * second query.
+ */
+export const canMaintainRouteSeats = (
+  actor: Pick<TokenPayload, 'userId' | 'role'>,
+  route: { operatorId: string }
+): boolean => {
+  if (actor.role === 'ADMIN') {
+    return true;
+  }
+
+  if (actor.role === 'OPERATOR') {
+    return route.operatorId === actor.userId;
+  }
+
+  return false;
+};
+
 export class SeatService {
   private seatRepo: SeatRepository;
 
@@ -285,6 +312,14 @@ export class SeatService {
       throw new NotFoundError('Route', routeId);
     }
 
+    // Ownership is resolved from the token, never from the body or path: the
+    // request only says *which* route, the actor says whether it may touch it.
+    // A foreign route answers exactly as a missing one does, so a probe cannot
+    // use the status code or message to discover another operator's route.
+    if (!canMaintainRouteSeats(actor, route)) {
+      throw new NotFoundError('Route', routeId);
+    }
+
     if (!route.busTemplate) {
       throw this.seatTemplateRequiredError(routeId);
     }
@@ -334,10 +369,16 @@ export class SeatService {
 
     const route = await prisma.route.findUnique({
       where: { id: routeId },
-      select: { id: true, busTemplateId: true },
+      select: { id: true, busTemplateId: true, operatorId: true },
     });
 
     if (!route) {
+      throw new NotFoundError('Route', routeId);
+    }
+
+    // Same predicate and same refusal as `blockSeats`; the ownership field was
+    // added to the existing select, so this costs no extra query.
+    if (!canMaintainRouteSeats(actor, route)) {
       throw new NotFoundError('Route', routeId);
     }
 
