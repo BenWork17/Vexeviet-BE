@@ -27,6 +27,7 @@ import {
   PaginatedResponse,
   PriceBreakdown,
   TokenPayload,
+  UserRole,
   AdminBooking,
   AdminBookingQuery,
   AdminDashboardStats,
@@ -207,11 +208,25 @@ export class BookingService {
   }
 
   /**
-   * Get booking by ID
+   * Get booking by ID.
+   *
+   * Authorization is expressed as "who may see this row", in this order:
+   * - no actor claims (internal/unauthenticated call path) → return the row;
+   * - the actor owns the booking (`booking.userId`) → return it;
+   * - an OPERATOR whose route owns the booking (`booking.route.operatorId`)
+   *   → return it;
+   * - anything else → `NotFoundError`.
+   *
+   * The refusal is a 404, never a 403: a customer must not learn that another
+   * user's booking exists, and an operator must not learn that a foreign route
+   * has a booking with this id. ADMIN is deliberately not special-cased here:
+   * admin reads go through the admin endpoints, and leaving it out keeps the
+   * customer/operator rule a single closed predicate.
    */
   async getBookingById(
     bookingId: string,
-    userId?: string
+    userId?: string,
+    role?: UserRole
   ): Promise<BookingDetailResponse> {
     const booking = await this.bookingRepo.findById(bookingId);
 
@@ -219,12 +234,34 @@ export class BookingService {
       throw new NotFoundError('Booking', bookingId);
     }
 
-    // Check ownership if userId provided
-    if (userId && booking.userId !== userId) {
+    if (userId && !this.canReadBooking(booking, { userId, role })) {
       throw new NotFoundError('Booking', bookingId);
     }
 
     return this.formatBookingDetailResponse(booking);
+  }
+
+  /**
+   * The read-authorization predicate for a single booking.
+   *
+   * Pure (no I/O), so the role × `booking.userId` × `route.operatorId` truth
+   * table can be exercised directly:
+   * - `Customer` row + CUSTOMER actor → allowed only on the actor's own row;
+   * - foreign row + CUSTOMER actor → refused;
+   * - own-route row + OPERATOR actor → allowed;
+   * - foreign-route row + OPERATOR actor → refused;
+   * - an OPERATOR's own booking is allowed by the `userId` clause regardless of
+   *   which route it is on, which is the same rule the customer path uses.
+   */
+  private canReadBooking(
+    booking: { userId: string; route?: { operatorId: string } | null },
+    actor: { userId: string; role?: UserRole }
+  ): boolean {
+    if (booking.userId === actor.userId) {
+      return true;
+    }
+
+    return actor.role === 'OPERATOR' && booking.route?.operatorId === actor.userId;
   }
 
   /**
@@ -476,9 +513,20 @@ export class BookingService {
    * Every time-scoped figure (revenue, payments needing action, revenue trend,
    * status summary) uses that window; `activeRoutes` / `operatorCount` are
    * current-state counts.
+   *
+   * Scoping: an OPERATOR is confined to `route.operatorId === actor.userId`,
+   * derived from the token alone — there is no route id in this path, and no
+   * query param participates. Every figure in the fan-out receives the same
+   * scope, so the seven queries stay seven queries (a predicate, never a
+   * per-row or per-metric second lookup). ADMIN passes no scope and gets
+   * exactly the numbers this method produced before the scope existed.
    */
-  async getAdminDashboard(days: number): Promise<AdminDashboardStats> {
+  async getAdminDashboard(days: number, actor: TokenPayload): Promise<AdminDashboardStats> {
     const { from, to, dayStarts } = this.buildWindow(days);
+
+    // The single scope value for this request. `undefined` for ADMIN means
+    // "no predicate" — not "empty result" — in every repository method below.
+    const operatorId = actor.role === 'OPERATOR' ? actor.userId : undefined;
 
     const [
       todayBookings,
@@ -489,15 +537,18 @@ export class BookingService {
       revenueRows,
       statusGroups,
     ] = await Promise.all([
-      this.bookingRepo.countCreatedSince(this.startOfToday()),
-      this.bookingRepo.sumCompletedPayments(from, to),
-      this.bookingRepo.countPaymentsNeedingAction(from, to),
-      this.bookingRepo.countActiveRoutes(),
-      this.bookingRepo.countActiveOperators(),
+      this.bookingRepo.countCreatedSince(this.startOfToday(), operatorId),
+      this.bookingRepo.sumCompletedPayments(from, to, operatorId),
+      this.bookingRepo.countPaymentsNeedingAction(from, to, operatorId),
+      this.bookingRepo.countActiveRoutes(operatorId),
+      // Scoped, this is "active operators in view" = the principal itself
+      // (1 while ACTIVE, else 0). Never the platform-wide figure — see the
+      // handoff note on why this is not a hardcoded 1.
+      this.bookingRepo.countActiveOperators(operatorId),
       // Day buckets must use the same "local day" definition as the labels
       // below and as "today 00:00 local", so the offset is passed explicitly.
-      this.bookingRepo.findRevenueTrend(from, to, this.localUtcOffsetMinutes(from)),
-      this.bookingRepo.countByStatusSince(from),
+      this.bookingRepo.findRevenueTrend(from, to, this.localUtcOffsetMinutes(from), operatorId),
+      this.bookingRepo.countByStatusSince(from, operatorId),
     ]);
 
     // Zero-fill: one point per day in the window, in chronological order.

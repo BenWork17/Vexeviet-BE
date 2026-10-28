@@ -88,6 +88,9 @@ const bookingDetailInclude = {
       duration: true,
       busType: true,
       price: true,
+      // Selected so an OPERATOR's read authorization can compare the route's
+      // owner without a second query. Not part of the response shape.
+      operatorId: true,
       operator: {
         select: {
           id: true,
@@ -166,9 +169,13 @@ export class BookingRepository {
   }
 
   /**
-   * Find booking by ID with relations
+   * Find booking by ID with relations.
+   *
+   * `route.operatorId` is selected so the caller can authorize an OPERATOR
+   * against the route's owner from the same row it already loads — no extra
+   * query, and no second source of truth for ownership.
    */
-  async findById(id: string): Promise<Booking | null> {
+  async findById(id: string): Promise<BookingDetailRow | null> {
     return prisma.booking.findUnique({
       where: { id },
       include: {
@@ -194,6 +201,7 @@ export class BookingRepository {
             duration: true,
             busType: true,
             price: true,
+            operatorId: true,
             operator: {
               select: {
                 id: true,
@@ -503,28 +511,55 @@ export class BookingRepository {
     return rows.map(row => row.bookingId);
   }
 
-  /** Bookings created at/after `since` (dashboard "today" tile). */
-  async countCreatedSince(since: Date): Promise<number> {
-    return prisma.booking.count({ where: { createdAt: { gte: since } } });
+  /**
+   * Bookings created at/after `since` (dashboard "today" tile).
+   *
+   * `operatorId` narrows to bookings on that operator's routes — a relation
+   * filter, so it stays one query (the scope is a predicate, not a second
+   * round-trip). Omitted, the query is byte-for-byte the platform-wide one.
+   */
+  async countCreatedSince(since: Date, operatorId?: string): Promise<number> {
+    return prisma.booking.count({
+      where: {
+        createdAt: { gte: since },
+        ...(operatorId ? { route: { operatorId } } : {}),
+      },
+    });
   }
 
   /** Booking counts grouped by status, restricted to a created-at window. */
-  async countByStatusSince(since: Date): Promise<{ status: BookingStatus; count: number }[]> {
+  async countByStatusSince(
+    since: Date,
+    operatorId?: string
+  ): Promise<{ status: BookingStatus; count: number }[]> {
     const groups = await prisma.booking.groupBy({
       by: ['status'],
-      where: { createdAt: { gte: since } },
+      where: {
+        createdAt: { gte: since },
+        ...(operatorId ? { route: { operatorId } } : {}),
+      },
       _count: { _all: true },
     });
 
     return groups.map(group => ({ status: group.status, count: group._count._all }));
   }
 
-  /** Sum of COMPLETED payment amounts in `[from, to)`, as a Decimal (no float math). */
-  async sumCompletedPayments(from: Date, to: Date): Promise<Prisma.Decimal> {
+  /**
+   * Sum of COMPLETED payment amounts in `[from, to)`, as a Decimal (no float math).
+   *
+   * `operatorId` scopes through `payment → booking → route` as a single relation
+   * filter; the aggregate stays one SQL aggregate, not a fetch-then-sum.
+   */
+  async sumCompletedPayments(
+    from: Date,
+    to: Date,
+    operatorId?: string
+  ): Promise<Prisma.Decimal> {
     const result = await prisma.payment.aggregate({
       where: {
         status: PaymentStatus.COMPLETED,
         createdAt: { gte: from, lt: to },
+        ...(operatorId ? { booking: { route: { operatorId } } } : {}),
       },
       _sum: { amount: true },
     });
@@ -533,24 +568,46 @@ export class BookingRepository {
   }
 
   /** Payments still needing an operator action (PENDING or FAILED) in `[from, to)`. */
-  async countPaymentsNeedingAction(from: Date, to: Date): Promise<number> {
+  async countPaymentsNeedingAction(
+    from: Date,
+    to: Date,
+    operatorId?: string
+  ): Promise<number> {
     return prisma.payment.count({
       where: {
         status: { in: [PaymentStatus.PENDING, PaymentStatus.FAILED] },
         createdAt: { gte: from, lt: to },
+        ...(operatorId ? { booking: { route: { operatorId } } } : {}),
       },
     });
   }
 
-  /** Active routes across the platform. */
-  async countActiveRoutes(): Promise<number> {
-    return prisma.route.count({ where: { status: RouteStatus.ACTIVE } });
+  /** Active routes, platform-wide or for one operator. */
+  async countActiveRoutes(operatorId?: string): Promise<number> {
+    return prisma.route.count({
+      where: {
+        status: RouteStatus.ACTIVE,
+        ...(operatorId ? { operatorId } : {}),
+      },
+    });
   }
 
-  /** Active users holding the OPERATOR role. */
-  async countActiveOperators(): Promise<number> {
+  /**
+   * Active users holding the OPERATOR role.
+   *
+   * `operatorId` restricts the same predicate to that one user. This is the
+   * honest translation of "operators in scope" for an operator's own view: the
+   * scoped universe contains exactly the principal's user row, so the result is
+   * `1` for an active operator and `0` for one whose status is not ACTIVE —
+   * rather than a hardcoded constant that could contradict the row.
+   */
+  async countActiveOperators(operatorId?: string): Promise<number> {
     return prisma.user.count({
-      where: { role: UserRole.OPERATOR, status: UserStatus.ACTIVE },
+      where: {
+        role: UserRole.OPERATOR,
+        status: UserStatus.ACTIVE,
+        ...(operatorId ? { id: operatorId } : {}),
+      },
     });
   }
 
@@ -764,12 +821,35 @@ export class BookingRepository {
    * midnight; without it a UTC+7 deployment would attribute early-morning revenue
    * to the previous day. `CONVERT_TZ` is avoided because it depends on the MySQL
    * time-zone tables being loaded.
+   *
+   * `operatorId` adds an inner join to `routes` and one bound parameter. The
+   * `SELECT` list, the `DATE_FORMAT` bucketing, `GROUP BY day` and
+   * `ORDER BY day ASC` are identical in both variants, so the scoped query is
+   * the unscoped query with an extra equality predicate — same shape, same day
+   * labels, same order. `INNER JOIN` is safe rather than merely convenient: every
+   * `bookings.routeId` is a non-null FK to `routes.id`, so the join cannot drop a
+   * payment the unscoped query would have counted for a scoped operator.
    */
   async findRevenueTrend(
     from: Date,
     to: Date,
-    offsetMinutes: number
+    offsetMinutes: number,
+    operatorId?: string
   ): Promise<RevenueTrendRow[]> {
+    if (operatorId) {
+      return prisma.$queryRaw<RevenueTrendRow[]>`
+        SELECT DATE_FORMAT(DATE_ADD(p.createdAt, INTERVAL ${offsetMinutes} MINUTE), '%Y-%m-%d') AS day,
+               SUM(p.amount) AS total
+        FROM payments p
+        INNER JOIN bookings b ON b.id = p.bookingId
+        INNER JOIN routes r ON r.id = b.routeId
+        WHERE p.status = 'COMPLETED' AND p.createdAt >= ${from} AND p.createdAt < ${to}
+          AND r.operatorId = ${operatorId}
+        GROUP BY day
+        ORDER BY day ASC
+      `;
+    }
+
     return prisma.$queryRaw<RevenueTrendRow[]>`
       SELECT DATE_FORMAT(DATE_ADD(createdAt, INTERVAL ${offsetMinutes} MINUTE), '%Y-%m-%d') AS day,
              SUM(amount) AS total
