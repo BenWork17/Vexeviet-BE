@@ -23,6 +23,10 @@ import {
   validateAdminBulkCancelBody,
   validateAdminBookingNotesBody,
 } from '../validators/admin-booking.validator';
+import {
+  validateAdminSeatBlockBody,
+  validateAdminSeatUnblockBody,
+} from '../validators/admin-seat.validator';
 
 const router: IRouter = Router();
 const bookingController = new BookingController();
@@ -229,6 +233,51 @@ router.post(
   '/seats/validate',
   validateBody(validateSeatsSchema),
   seatController.validateSeats
+);
+
+// =====================================================
+// ADMIN SEAT MAINTENANCE BLOCKING (`Khóa ghế bảo trì`)
+// =====================================================
+//
+// Registered after the customer `/seats/*` literals. There is no
+// `/seats/:id` parameter route, so no literal-vs-parameter collision is
+// possible here (the only parameterised routes are under `/bookings`). Both
+// paths are ADMIN-only: `authMiddleware` establishes the token and `adminOnly`
+// rejects any role other than ADMIN.
+
+/**
+ * @route   POST /api/v1/seats/admin/block
+ * @desc    Block specific seats for one route/date (maintenance)
+ * @access  Private (ADMIN only)
+ *
+ * `POST` rather than `PUT`: the operation adds maintenance state to a set of
+ * seats, and the same body shape is reused by the unblock route below.
+ */
+router.post(
+  '/seats/admin/block',
+  authMiddleware,
+  adminOnly,
+  validateAdminSeatBlockBody,
+  seatController.adminBlockSeats
+);
+
+/**
+ * @route   POST /api/v1/seats/admin/unblock
+ * @desc    Remove a maintenance block from specific seats for one route/date
+ * @access  Private (ADMIN only)
+ *
+ * `POST`, not `DELETE` with a body: `DELETE` bodies are legal but are dropped by
+ * some proxies and intermediaries (the API gateway is an `http-proxy-middleware`
+ * proxy in front of this service), so the body would vanish before reaching
+ * this router. The contract treats the admin button label — not the HTTP
+ * method — as the user-visible surface, so a `POST` sub-resource is used.
+ */
+router.post(
+  '/seats/admin/unblock',
+  authMiddleware,
+  adminOnly,
+  validateAdminSeatUnblockBody,
+  seatController.adminUnblockSeats
 );
 
 export default router;

@@ -1,10 +1,15 @@
 import { SeatRepository } from '../repositories/seat.repository';
-import { prisma, SeatStatus } from '@vexeviet/database';
+import { prisma, SeatStatus, writeAuditLog } from '@vexeviet/database';
 import {
   SeatAvailabilityRequest,
   SeatAvailabilityResponse,
   SeatHoldRequest,
   SeatHoldResponse,
+  TokenPayload,
+  AdminSeatBlockRequest,
+  AdminSeatBlockResult,
+  AdminSeatUnblockRequest,
+  AdminSeatUnblockResult,
 } from '../types';
 import { NotFoundError, SeatsUnavailableError } from '../middlewares/error.middleware';
 import { config } from '../config';
@@ -89,6 +94,14 @@ export class SeatService {
       };
 
       if (!tSeat.isAvailable) {
+        // Template-level: this seat does not exist / is broken for this vehicle.
+        seatInfo.status = SeatStatus.BLOCKED;
+        seatInfo.isSelectable = false;
+      } else if (bookingRecord?.status === SeatStatus.BLOCKED) {
+        // Per-date admin maintenance block. Checked before the HELD/BOOKED
+        // branch because it is an unconditional unavailability: a BLOCKED row
+        // carries `lockedUntil` = end of service date, which is intentionally
+        // not read as a hold deadline.
         seatInfo.status = SeatStatus.BLOCKED;
         seatInfo.isSelectable = false;
       } else if (bookingRecord) {
@@ -236,6 +249,168 @@ export class SeatService {
     return {
       valid: invalidSeats.length === 0,
       invalidSeats,
+    };
+  }
+
+  // =====================================================
+  // ADMIN MAINTENANCE SEAT BLOCKING (`Khóa ghế bảo trì`)
+  // =====================================================
+
+  /**
+   * Block seats for one route/date (admin maintenance).
+   *
+   * `404` when the route does not exist or has no bus template — the whole
+   * request is meaningless then. An individual seat that is not in the template
+   * is a per-item `skipped` entry instead, so one typo cannot block the other
+   * seats.
+   */
+  async blockSeats(
+    request: AdminSeatBlockRequest,
+    actor: TokenPayload
+  ): Promise<AdminSeatBlockResult> {
+    const { routeId, departureDate, seatNumbers, reason } = request;
+
+    const route = await prisma.route.findUnique({
+      where: { id: routeId },
+      include: {
+        busTemplate: {
+          select: {
+            seats: { select: { seatNumber: true } },
+          },
+        },
+      },
+    });
+
+    if (!route) {
+      throw new NotFoundError('Route', routeId);
+    }
+
+    if (!route.busTemplate) {
+      throw new NotFoundError('Bus template for route', routeId);
+    }
+
+    const validSeatNumbers = new Set(route.busTemplate.seats.map(seat => seat.seatNumber));
+    const date = this.parseDepartureDate(departureDate);
+
+    const result = await this.seatRepo.blockSeats(routeId, date, seatNumbers, validSeatNumbers);
+
+    // One audit row for the whole request: a 40-seat block is one admin action,
+    // and one row per seat would bury the rest of the trail under a single
+    // click. `writeAuditLog` never throws, so it cannot fail this request.
+    const auditActor = await this.resolveAuditActor(actor);
+
+    await writeAuditLog({
+      actorId: auditActor.actorId,
+      actorName: auditActor.actorName,
+      actorRole: auditActor.actorRole,
+      action: 'SEAT_BLOCKED',
+      target: `route:${routeId}`,
+      targetId: routeId,
+      severity: 'WARNING',
+      metadata: {
+        routeId,
+        departureDate,
+        seatNumbers: result.blocked,
+        reason,
+        skippedSeatNumbers: result.skipped.map(item => item.seatNumber),
+      },
+    });
+
+    return result;
+  }
+
+  /**
+   * Remove a maintenance block from seats for one route/date.
+   *
+   * Only `BLOCKED` rows are touched; a held or sold seat is reported skipped and
+   * never released by an unblock. Idempotent per seat: a seat with no block is
+   * `skipped` with `NOT_BLOCKED`, not a request-level error.
+   */
+  async unblockSeats(
+    request: AdminSeatUnblockRequest,
+    actor: TokenPayload
+  ): Promise<AdminSeatUnblockResult> {
+    const { routeId, departureDate, seatNumbers } = request;
+
+    const route = await prisma.route.findUnique({
+      where: { id: routeId },
+      select: { id: true, busTemplateId: true },
+    });
+
+    if (!route) {
+      throw new NotFoundError('Route', routeId);
+    }
+
+    if (!route.busTemplateId) {
+      throw new NotFoundError('Bus template for route', routeId);
+    }
+
+    const date = this.parseDepartureDate(departureDate);
+    const result = await this.seatRepo.unblockSeats(routeId, date, seatNumbers);
+
+    const auditActor = await this.resolveAuditActor(actor);
+
+    await writeAuditLog({
+      actorId: auditActor.actorId,
+      actorName: auditActor.actorName,
+      actorRole: auditActor.actorRole,
+      action: 'SEAT_UNBLOCKED',
+      target: `route:${routeId}`,
+      targetId: routeId,
+      severity: 'INFO',
+      metadata: {
+        routeId,
+        departureDate,
+        seatNumbers: result.unblocked,
+        skippedSeatNumbers: result.skipped.map(item => item.seatNumber),
+      },
+    });
+
+    return result;
+  }
+
+  /**
+   * Parse a validated `YYYY-MM-DD` into the UTC midnight the `@db.Date` column
+   * and every repository normalisation expect.
+   */
+  private parseDepartureDate(departureDate: string): Date {
+    return new Date(`${departureDate}T00:00:00.000Z`);
+  }
+
+  /**
+   * Audit actor snapshot for an admin action — the same fallback chain P7 uses
+   * (full name → account email → token email), because `writeAuditLog` emits a
+   * row whose `actorName` must never be empty.
+   *
+   * Best-effort: it runs after the business write, so a lookup failure falls
+   * back to the token email rather than turning a successful block into a 500.
+   */
+  private async resolveAuditActor(
+    actor: TokenPayload
+  ): Promise<{ actorId: string; actorName: string; actorRole: string }> {
+    let user: { firstName: string | null; lastName: string | null; email: string } | null = null;
+
+    try {
+      user = await prisma.user.findUnique({
+        where: { id: actor.userId },
+        select: { firstName: true, lastName: true, email: true },
+      });
+    } catch (error) {
+      console.error('[audit] failed to resolve actor name; falling back to token email', {
+        actorId: actor.userId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+
+    const fullName = [user?.firstName, user?.lastName]
+      .filter((part): part is string => Boolean(part && part.trim()))
+      .join(' ')
+      .trim();
+
+    return {
+      actorId: actor.userId,
+      actorName: fullName || user?.email || actor.email,
+      actorRole: actor.role,
     };
   }
 }

@@ -370,3 +370,56 @@ export interface AdminBulkCancelResponse {
   results: AdminBulkCancelItem[];
   summary: AdminBulkCancelSummary;
 }
+
+// =====================================================
+// ADMIN SEAT MAINTENANCE BLOCKING (`Khóa ghế bảo trì`)
+// =====================================================
+
+/** Body of `POST /api/v1/seats/admin/block`. */
+export interface AdminSeatBlockRequest {
+  routeId: string;
+  /** `YYYY-MM-DD`; the block lasts to the end of this service date. */
+  departureDate: string;
+  seatNumbers: string[];
+  /** Required: an unstated maintenance block is unauditable. */
+  reason: string;
+}
+
+/** Body of `POST /api/v1/seats/admin/unblock` (no reason: unblocking needs none). */
+export interface AdminSeatUnblockRequest {
+  routeId: string;
+  departureDate: string;
+  seatNumbers: string[];
+}
+
+/**
+ * Why one requested seat was not changed by an admin block/unblock.
+ *
+ * Per-item rather than a whole-request 400: one stale seat number must not
+ * prevent an admin from blocking the other 49 seats of a broken row.
+ */
+export type AdminSeatSkipCode =
+  | 'SEAT_NOT_FOUND' // not present in the route's bus template
+  | 'SEAT_HELD' // a live customer hold owns it — never stolen
+  | 'SEAT_BOOKED' // sold — never stolen
+  | 'SEAT_STATE_CHANGED' // moved to HELD/BOOKED between the read and the write
+  | 'NOT_BLOCKED'; // unblock of a seat that carries no maintenance block
+
+/** One skipped seat of an admin block/unblock. */
+export interface AdminSeatSkipItem {
+  seatNumber: string;
+  code: AdminSeatSkipCode;
+  message: string;
+}
+
+/** `data` payload of `POST /api/v1/seats/admin/block`. */
+export interface AdminSeatBlockResult {
+  blocked: string[];
+  skipped: AdminSeatSkipItem[];
+}
+
+/** `data` payload of `POST /api/v1/seats/admin/unblock`. */
+export interface AdminSeatUnblockResult {
+  unblocked: string[];
+  skipped: AdminSeatSkipItem[];
+}

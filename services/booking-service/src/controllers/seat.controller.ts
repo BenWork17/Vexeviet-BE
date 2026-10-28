@@ -2,6 +2,10 @@ import { Request, Response, NextFunction } from 'express';
 import { SeatService } from '../services/seat.service';
 import { AuthRequest } from '../middlewares/auth.middleware';
 import { SeatAvailabilityRequest, SeatHoldRequest } from '../types';
+import {
+  AdminSeatBlockBodyLocals,
+  AdminSeatUnblockBodyLocals,
+} from '../validators/admin-seat.validator';
 
 export class SeatController {
   private seatService: SeatService;
@@ -141,6 +145,73 @@ export class SeatController {
       }
 
       const result = await this.seatService.validateSeatNumbers(routeId, seats);
+
+      res.status(200).json({
+        success: true,
+        data: result,
+      });
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  /**
+   * Admin: block seats for maintenance on one route/date
+   * POST /api/v1/seats/admin/block
+   *
+   * The trimmed body is left on `res.locals.adminSeatBlockBody` by
+   * `validateAdminSeatBlockBody`.
+   */
+  adminBlockSeats = async (
+    req: AuthRequest,
+    res: Response<unknown, AdminSeatBlockBodyLocals>,
+    next: NextFunction
+  ): Promise<void> => {
+    try {
+      if (!req.user) {
+        res.status(401).json({
+          success: false,
+          error: { code: 'UNAUTHORIZED', message: 'Authentication required' },
+        });
+        return;
+      }
+
+      const result = await this.seatService.blockSeats(
+        res.locals.adminSeatBlockBody,
+        req.user
+      );
+
+      res.status(200).json({
+        success: true,
+        data: result,
+      });
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  /**
+   * Admin: remove a maintenance block on one route/date
+   * POST /api/v1/seats/admin/unblock
+   */
+  adminUnblockSeats = async (
+    req: AuthRequest,
+    res: Response<unknown, AdminSeatUnblockBodyLocals>,
+    next: NextFunction
+  ): Promise<void> => {
+    try {
+      if (!req.user) {
+        res.status(401).json({
+          success: false,
+          error: { code: 'UNAUTHORIZED', message: 'Authentication required' },
+        });
+        return;
+      }
+
+      const result = await this.seatService.unblockSeats(
+        res.locals.adminSeatUnblockBody,
+        req.user
+      );
 
       res.status(200).json({
         success: true,
