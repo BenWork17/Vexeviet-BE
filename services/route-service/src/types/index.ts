@@ -115,6 +115,17 @@ export interface AdminRoute {
   hasBusTemplate: boolean;
 }
 
+/**
+ * `GET /routes/my/routes` — one of the operator's own routes.
+ *
+ * Deliberately an alias, not a parallel interface: the operator console renders
+ * the same row the admin console renders, and both are built by
+ * `RouteService.toAdminRoute`. The operator view differs only in scope (the
+ * JWT's own `operatorId`), never in fields — so `operatorName` is the operator's
+ * own name and the seat figures come from the same batched loader.
+ */
+export type OperatorRoute = AdminRoute;
+
 /** Contract Shape 3 — AdminOperator, derived from `User` where `role=OPERATOR`. */
 export interface AdminOperator {
   id: string;

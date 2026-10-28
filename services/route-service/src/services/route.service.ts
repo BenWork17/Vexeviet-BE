@@ -16,6 +16,7 @@ import {
   AdminRouteQuery,
   AdminRoute,
   AdminOperator,
+  OperatorRoute,
   PaginatedResponse,
   TokenPayload,
 } from '../types';
@@ -337,15 +338,37 @@ export class RouteService {
     return deleted;
   }
 
-  async findByOperator(operatorId: string, page: number = 1, limit: number = 20): Promise<PaginatedResponse<Route>> {
+  /**
+   * `GET /routes/my/routes` — the operator's own routes, in the same shape the
+   * admin console renders for them.
+   *
+   * Scope is the `userId` from the verified token, passed straight through by
+   * the controller; nothing in the query string can widen it. The row set is
+   * built by `toAdminRoute` over `AdminRouteRow`, i.e. the exact mapper
+   * `findAdminRoutes` uses, so the operator and admin views cannot drift.
+   *
+   * Query budget, independent of page size: page select + count (2), template
+   * totals + occupied seats (2), plus the Seat fallback (1) only when a
+   * referenced template row is missing — 4 normally, 5 at worst, never one per
+   * row. `countOperatorRoutes` carries the same DELETED predicate as the page,
+   * so `pagination.total` agrees with the rows returned.
+   */
+  async findByOperator(
+    operatorId: string,
+    page: number = 1,
+    limit: number = 20
+  ): Promise<PaginatedResponse<OperatorRoute>> {
     const skip = (page - 1) * limit;
-    const [routes, total] = await Promise.all([
-      this.routeRepo.findByOperatorId(operatorId, skip, limit),
-      this.routeRepo.count({ operatorId }),
+
+    const [rows, total] = await Promise.all([
+      this.routeRepo.findOperatorPage(operatorId, skip, limit),
+      this.routeRepo.countOperatorRoutes(operatorId),
     ]);
 
+    const seats = await this.loadSeatData(rows);
+
     return {
-      data: routes,
+      data: rows.map((row) => this.toAdminRoute(row, seats)),
       pagination: {
         page,
         limit,
