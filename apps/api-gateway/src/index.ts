@@ -15,7 +15,22 @@ const app = express();
 // Middlewares
 app.use(cors());
 app.use(requestLogger);
-// app.use(rateLimiter(100, 60000)); // 100 requests per minute
+
+// Rate limiting for the credential endpoints only.
+// Mounted at the app root behind an explicit prefix filter (rather than at `${API_PREFIX}/auth`)
+// so `req.path` stays the full `/api/v1/auth/...` and keeps matching the exact-string keys in
+// `rateLimitConfigs` — an Express mount point would strip the prefix and no key could ever match.
+// /health, /api/docs, /api/docs.json, /services and every proxy mount bypass this entirely.
+// NOTE: the limiter keys on `req.ip`; `trust proxy` is deliberately unset here, so behind a
+// reverse proxy every client shares the proxy's bucket until that is configured on purpose.
+const authRateLimiter = rateLimiter(100, 60000); // 100 requests per minute for non-listed auth paths
+app.use((req, res, next) => {
+  if (req.path === `${API_PREFIX}/auth` || req.path.startsWith(`${API_PREFIX}/auth/`)) {
+    authRateLimiter(req, res, next);
+    return;
+  }
+  next();
+});
 
 // Health check
 app.get('/health', (_req, res) => {
