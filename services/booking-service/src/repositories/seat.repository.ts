@@ -1,9 +1,20 @@
-import { prisma, BookingSeat, SeatStatus } from '@vexeviet/database';
+import { Prisma, prisma, BookingSeat, SeatStatus } from '@vexeviet/database';
 import type {
   AdminSeatBlockResult,
   AdminSeatSkipItem,
   AdminSeatUnblockResult,
 } from '../types';
+
+/**
+ * Verdict for a `BookingSeat` row that already exists, decided from its status
+ * alone. An AVAILABLE row or an expired HELD row `proceed` to the guarded
+ * write; if that write loses the race it reports `SEAT_STATE_CHANGED` there,
+ * because only the write itself can see the outcome.
+ */
+type SeatBlockOutcome =
+  | { kind: 'blocked' }
+  | { kind: 'proceed' }
+  | { kind: 'skipped'; skip: AdminSeatSkipItem };
 
 export class SeatRepository {
   /**
@@ -368,6 +379,104 @@ export class SeatRepository {
   }
 
   /**
+   * True when `error` is Prisma's P2002 ("unique constraint failed").
+   *
+   * Duck-typed on `code` rather than `instanceof
+   * Prisma.PrismaClientKnownRequestError`, matching `isRecordNotFound` in
+   * booking.service.ts: a duplicated generated client makes `instanceof`
+   * silently false.
+   */
+  private static isUniqueConstraintViolation(error: unknown): boolean {
+    return (
+      typeof error === 'object' &&
+      error !== null &&
+      'code' in error &&
+      (error as { code?: unknown }).code === 'P2002'
+    );
+  }
+
+  /**
+   * Fetch one booking seat as a *current read* (`FOR UPDATE`).
+   *
+   * A plain `findUnique` will not do here. MySQL's default REPEATABLE READ
+   * pins this transaction's snapshot at the opening `findMany`, so after a
+   * P2002 — whose row was committed by another transaction *after* that
+   * snapshot — a consistent read returns nothing at all. That is the same
+   * limitation the isolation note in `holdSeats` describes; a locking read is
+   * the mechanism that sees the now-committed row. It is safe as a write
+   * guard too: holding the row lock is exactly what the subsequent
+   * `updateMany` needs.
+   *
+   * `departureDate` is compared as a `'YYYY-MM-DD'` string, not a JS `Date`:
+   * the column is `@db.Date` (no time component) while the driver serialises a
+   * `Date` to a full datetime, so binding it directly matches zero rows. A
+   * `DATE` column compared to a date-formatted string still uses the
+   * `(routeId, departureDate, seatNumber)` index, and the returned value
+   * round-trips through the client identically to a `findMany` today.
+   */
+  private static async findSeatForUpdate(
+    tx: Prisma.TransactionClient,
+    routeId: string,
+    departureDate: Date,
+    seatNumber: string
+  ): Promise<BookingSeat | null> {
+    const departureDay = departureDate.toISOString().slice(0, 10);
+    const rows = await tx.$queryRaw<BookingSeat[]>`
+      SELECT id, bookingId, holdId, routeId, seatId, departureDate, seatNumber,
+             status, lockedAt, lockedUntil, price, createdAt
+      FROM booking_seats
+      WHERE routeId = ${routeId}
+        AND seatNumber = ${seatNumber}
+        AND departureDate = ${departureDay}
+      LIMIT 1
+      FOR UPDATE
+    `;
+    return rows[0] ?? null;
+  }
+
+  /**
+   * Classify an existing `BookingSeat` row for `blockSeats`, using the same
+   * codes the batch loop has always reported. Shared by the snapshot read and
+   * the post-conflict re-read so the two cannot drift apart.
+   */
+  private static classifyForBlock(
+    seatNumber: string,
+    existing: BookingSeat,
+    now: Date
+  ): SeatBlockOutcome {
+    if (existing.status === SeatStatus.BOOKED) {
+      return {
+        kind: 'skipped',
+        skip: {
+          seatNumber,
+          code: 'SEAT_BOOKED',
+          message: `Seat '${seatNumber}' is booked and cannot be blocked`,
+        },
+      };
+    }
+
+    if (existing.status === SeatStatus.HELD && existing.lockedUntil > now) {
+      return {
+        kind: 'skipped',
+        skip: {
+          seatNumber,
+          code: 'SEAT_HELD',
+          message: `Seat '${seatNumber}' is currently held by a customer`,
+        },
+      };
+    }
+
+    if (existing.status === SeatStatus.BLOCKED) {
+      // Already blocked with the same scope: reporting it as blocked keeps
+      // the endpoint idempotent for a double-click, and the audit row still
+      // records what the admin asked for.
+      return { kind: 'blocked' };
+    }
+
+    return { kind: 'proceed' };
+  }
+
+  /**
    * Mark seats as maintenance-blocked for one route/date.
    *
    * Per-seat outcomes: a seat that is not in the bus template is reported
@@ -419,35 +528,19 @@ export class SeatRepository {
           continue;
         }
 
-        const existing = existingBySeatNumber.get(seatNumber);
+        let existing = existingBySeatNumber.get(seatNumber);
 
-        if (existing?.status === SeatStatus.BOOKED) {
-          skipped.push({
-            seatNumber,
-            code: 'SEAT_BOOKED',
-            message: `Seat '${seatNumber}' is booked and cannot be blocked`,
-          });
-          continue;
-        }
+        if (existing) {
+          const outcome = SeatRepository.classifyForBlock(seatNumber, existing, now);
 
-        if (
-          existing?.status === SeatStatus.HELD &&
-          existing.lockedUntil > now
-        ) {
-          skipped.push({
-            seatNumber,
-            code: 'SEAT_HELD',
-            message: `Seat '${seatNumber}' is currently held by a customer`,
-          });
-          continue;
-        }
-
-        if (existing?.status === SeatStatus.BLOCKED) {
-          // Already blocked with the same scope: reporting it as blocked keeps
-          // the endpoint idempotent for a double-click, and the audit row still
-          // records what the admin asked for.
-          blocked.push(seatNumber);
-          continue;
+          if (outcome.kind === 'blocked') {
+            blocked.push(seatNumber);
+            continue;
+          }
+          if (outcome.kind === 'skipped') {
+            skipped.push(outcome.skip);
+            continue;
+          }
         }
 
         const blockData = {
@@ -461,16 +554,60 @@ export class SeatRepository {
         };
 
         if (!existing) {
-          await tx.bookingSeat.create({
-            data: {
-              ...blockData,
-              routeId,
-              departureDate: normalizedDate,
+          try {
+            await tx.bookingSeat.create({
+              data: {
+                ...blockData,
+                routeId,
+                departureDate: normalizedDate,
+                seatNumber,
+              },
+            });
+            blocked.push(seatNumber);
+            continue;
+          } catch (error) {
+            // A concurrent block created this row between the read and the
+            // insert. That is an ordinary double-click, not a server fault:
+            // re-read and report the seat per-item instead of letting P2002
+            // become a 500. Any other Prisma error still propagates.
+            if (!SeatRepository.isUniqueConstraintViolation(error)) {
+              throw error;
+            }
+          }
+
+          const raced = await SeatRepository.findSeatForUpdate(
+            tx,
+            routeId,
+            normalizedDate,
+            seatNumber
+          );
+
+          if (!raced) {
+            // The conflicting row was removed again before it could be read
+            // (e.g. a concurrent unblock). Nothing is blocked, so say so
+            // rather than claiming a block that is not there.
+            skipped.push({
               seatNumber,
-            },
-          });
-          blocked.push(seatNumber);
-          continue;
+              code: 'SEAT_STATE_CHANGED',
+              message: `Seat '${seatNumber}' changed state while being blocked; retry`,
+            });
+            continue;
+          }
+
+          const outcome = SeatRepository.classifyForBlock(seatNumber, raced, now);
+
+          if (outcome.kind === 'blocked') {
+            blocked.push(seatNumber);
+            continue;
+          }
+          if (outcome.kind === 'skipped') {
+            skipped.push(outcome.skip);
+            continue;
+          }
+          // The winner's row is still blockable (it was AVAILABLE, or an
+          // expired hold, when it landed). Fall through to the guarded write
+          // below, which is what makes claiming it honest.
+          existing = raced;
         }
 
         // Guard the write: only an AVAILABLE row or an expired HELD row may
