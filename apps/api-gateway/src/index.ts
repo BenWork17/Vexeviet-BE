@@ -5,12 +5,19 @@ import swaggerUi from 'swagger-ui-express';
 import { config } from '@vexeviet/config';
 import { API_PREFIX } from '@vexeviet/common';
 import { services } from './config/services.config';
+import { applyTrustProxy } from './config/trust-proxy.config';
 import { swaggerSpec } from './config/swagger.config';
 import { requestLogger } from './middlewares/logger.middleware';
 import { rateLimiter } from './middlewares/rate-limiter.middleware';
 import { errorHandler, notFoundHandler } from './middlewares/error.middleware';
 
 const app = express();
+
+// `trust proxy` must be set before any middleware reads `req.ip` (the rate
+// limiter and request logger both do). It is driven by TRUST_PROXY_HOPS and
+// defaults to off — see config/trust-proxy.config.ts for the accepted values.
+const trustProxy = applyTrustProxy(app);
+console.log(`🔒 Trust proxy: ${trustProxy.reason}`);
 
 // Middlewares
 app.use(cors());
@@ -21,8 +28,9 @@ app.use(requestLogger);
 // so `req.path` stays the full `/api/v1/auth/...` and keeps matching the exact-string keys in
 // `rateLimitConfigs` — an Express mount point would strip the prefix and no key could ever match.
 // /health, /api/docs, /api/docs.json, /services and every proxy mount bypass this entirely.
-// NOTE: the limiter keys on `req.ip`; `trust proxy` is deliberately unset here, so behind a
-// reverse proxy every client shares the proxy's bucket until that is configured on purpose.
+// NOTE: the limiter keys on `req.ip`. Set TRUST_PROXY_HOPS to the number of reverse proxies in
+// front of this gateway so the real client IP is used; leave it unset (the default) when there
+// is no proxy, or every client will share a single bucket.
 const authRateLimiter = rateLimiter(100, 60000); // 100 requests per minute for non-listed auth paths
 app.use((req, res, next) => {
   if (req.path === `${API_PREFIX}/auth` || req.path.startsWith(`${API_PREFIX}/auth/`)) {
