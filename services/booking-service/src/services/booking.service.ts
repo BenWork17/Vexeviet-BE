@@ -5,6 +5,7 @@ import {
   BookingRepository,
   type AdminBookingRow,
   type AdminCancelTargetRow,
+  type AdminConfirmTargetRow,
   type BookingDetailRow,
 } from '../repositories/booking.repository';
 import { SeatRepository } from '../repositories/seat.repository';
@@ -12,6 +13,7 @@ import {
   prisma,
   Prisma,
   BookingStatus,
+  PaymentStatus,
   SeatStatus,
   RouteStatus,
   Route,
@@ -30,6 +32,8 @@ import {
   AdminDashboardStats,
   AdminBulkCancelItem,
   AdminBulkCancelResponse,
+  AdminBulkConfirmItem,
+  AdminBulkConfirmResponse,
   DashboardPoint,
 } from '../types';
 import {
@@ -715,6 +719,183 @@ export class BookingService {
         requested: ids.length,
         cancelled,
         failed,
+      },
+    };
+  }
+
+  /**
+   * Confirm a batch of bookings on behalf of an ADMIN, gated on a completed
+   * payment.
+   *
+   * The gate is the point of this endpoint: without it an admin could mint
+   * tickets for bookings whose money never arrived, while the seats are already
+   * held for free.
+   *
+   * Eligibility is *both* of:
+   * - `booking.status === PENDING`, and
+   * - the booking's **latest** payment (newest by `createdAt DESC, id DESC`) is
+   *   `COMPLETED`.
+   *
+   * The latest-payment rule is not re-invented here: it is
+   * `findIdsWithLatestPaymentStatusAmong`, which shares its implementation with
+   * `findIdsByLatestPaymentStatus` — the rule behind the admin list's
+   * `paymentStatus` filter. If the two disagreed, the screen could offer a row it
+   * labelled "paid" and this endpoint would refuse it (or the reverse). That is
+   * also why `payments: { some: { status: 'COMPLETED' } }` is not used: `some`
+   * matches an *older* payment and would accept a booking whose latest attempt
+   * failed.
+   *
+   * Deliberately does **not** apply the customer payment deadline that
+   * `confirmBooking` enforces (410 once `paymentDeadline` passes). That deadline
+   * exists to stop an *unpaid* booking from holding seats; applying it here would
+   * mean a booking whose money is already in — merely confirmed late — could
+   * never be confirmed at all. `confirmBooking` itself is untouched, so the
+   * internal payment callback keeps its behaviour.
+   *
+   * Per-item and independent: one refusal never aborts the rest. Work is
+   * bounded — one `findMany` for the batch, one latest-payment query for those
+   * ids, then one transaction doing guarded per-row updates.
+   */
+  async confirmBookingsAsAdmin(
+    ids: string[],
+    actor: TokenPayload
+  ): Promise<AdminBulkConfirmResponse> {
+    const targets = await this.bookingRepo.findConfirmTargets(ids);
+    const targetById = new Map(targets.map(target => [target.id, target]));
+
+    const results = new Map<string, AdminBulkConfirmItem>();
+    const pendingTargets: AdminConfirmTargetRow[] = [];
+
+    for (const id of ids) {
+      const target = targetById.get(id);
+
+      if (!target) {
+        results.set(id, {
+          id,
+          ok: false,
+          code: 'NOT_FOUND',
+          message: 'Booking not found',
+        });
+        continue;
+      }
+
+      if (target.status !== BookingStatus.PENDING) {
+        results.set(id, {
+          id,
+          ok: false,
+          code: 'CONFLICT',
+          message: `Cannot confirm booking with status: ${target.status}`,
+        });
+        continue;
+      }
+
+      pendingTargets.push(target);
+    }
+
+    // Payment gate, resolved in one query for the whole batch. Only the rows
+    // that survived the status check are asked about — a non-PENDING booking is
+    // already refused for a reason the admin can act on.
+    const pendingIds = pendingTargets.map(target => target.id);
+    const paidIds = new Set(
+      await this.bookingRepo.findIdsWithLatestPaymentStatusAmong(
+        PaymentStatus.COMPLETED,
+        pendingIds
+      )
+    );
+
+    const confirmable: AdminConfirmTargetRow[] = [];
+
+    for (const target of pendingTargets) {
+      if (paidIds.has(target.id)) {
+        confirmable.push(target);
+        continue;
+      }
+
+      results.set(target.id, {
+        id: target.id,
+        ok: false,
+        code: 'PAYMENT_NOT_COMPLETED',
+        message: 'Booking has no completed payment',
+      });
+    }
+
+    if (confirmable.length > 0) {
+      const { confirmedIds, skippedIds, seatsConfirmedByBookingId } =
+        await this.bookingRepo.confirmManyAsAdmin(confirmable);
+
+      if (confirmedIds.length > 0) {
+        const auditActor = await this.resolveAuditActor(actor);
+
+        for (const id of confirmedIds) {
+          const target = targetById.get(id);
+
+          if (!target) {
+            continue;
+          }
+
+          const seatsConfirmed = seatsConfirmedByBookingId[id] ?? 0;
+
+          results.set(id, {
+            id,
+            ok: true,
+            status: 'CONFIRMED',
+            seatsConfirmed,
+            // Zero seats moved is still a completed status transition, but the
+            // booking holds nothing: `releaseExpiredHolds` may already have
+            // deleted its HELD rows. Saying so per item is the only honest
+            // reporting; re-acquiring the seats is out of scope.
+            ...(seatsConfirmed === 0 ? { warning: 'SEATS_NOT_CONFIRMED' as const } : {}),
+          });
+
+          // One audit row per confirmed booking, with the admin as actor, so the
+          // trail attributes every ticket rather than just the batch.
+          await writeAuditLog({
+            actorId: auditActor.actorId,
+            actorName: auditActor.actorName,
+            actorRole: auditActor.actorRole,
+            action: 'BOOKING_CONFIRMED',
+            target: `booking:${target.bookingCode}`,
+            targetId: target.id,
+            severity: 'INFO',
+            metadata: {
+              bookingCode: target.bookingCode,
+              previousStatus: target.status,
+              seatsConfirmed,
+              adminOverride: true,
+            },
+          });
+        }
+      }
+
+      // Raced away between the classification read and the guarded update: this
+      // call did not confirm it, so it is reported, not audited.
+      for (const id of skippedIds) {
+        results.set(id, {
+          id,
+          ok: false,
+          code: 'CONFLICT',
+          message: 'Booking status changed before it could be confirmed',
+        });
+      }
+    }
+
+    const ordered = ids
+      .map(id => results.get(id))
+      .filter((item): item is AdminBulkConfirmItem => item !== undefined);
+
+    const confirmed = ordered.filter(item => item.ok).length;
+    const failed = ordered.filter(item => !item.ok).length;
+    const seatsNotConfirmed = ordered.filter(
+      item => item.ok && item.seatsConfirmed === 0
+    ).length;
+
+    return {
+      results: ordered,
+      summary: {
+        requested: ids.length,
+        confirmed,
+        failed,
+        seatsNotConfirmed,
       },
     };
   }

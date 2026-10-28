@@ -113,6 +113,23 @@ export interface AdminCancelTargetRow {
   status: BookingStatus;
 }
 
+/** The fields a confirm action needs from a booking, plus its booking code. */
+export interface AdminConfirmTargetRow {
+  id: string;
+  bookingCode: string;
+  status: BookingStatus;
+}
+
+/** Outcome of the guarded bulk confirm, per row. */
+export interface AdminConfirmManyResult {
+  /** Rows this call actually moved to `CONFIRMED` (the guard matched). */
+  confirmedIds: string[];
+  /** Rows whose status had moved on between the read and the guard. */
+  skippedIds: string[];
+  /** `HELD → BOOKED` rows moved, per confirmed booking id. Zero is possible. */
+  seatsConfirmedByBookingId: Record<string, number>;
+}
+
 /** One day bucket of completed-payment revenue. */
 export interface RevenueTrendRow {
   day: string; // YYYY-MM-DD as produced by MySQL DATE_FORMAT
@@ -434,6 +451,44 @@ export class BookingRepository {
    * (the schema already relies on modern MySQL elsewhere).
    */
   async findIdsByLatestPaymentStatus(status: PaymentStatus): Promise<string[]> {
+    return this.queryIdsByLatestPaymentStatus(status, null);
+  }
+
+  /**
+   * The same latest-payment rule as `findIdsByLatestPaymentStatus`, restricted
+   * to `ids`.
+   *
+   * Deliberately one shared implementation: the admin bulk confirm and the admin
+   * list must agree on what "paid" means, or the screen offers a row it labels
+   * paid and the endpoint refuses it. `payments: { some: { status } }` is *not*
+   * that rule — it matches an older payment and would disagree here.
+   */
+  async findIdsWithLatestPaymentStatusAmong(
+    status: PaymentStatus,
+    ids: string[]
+  ): Promise<string[]> {
+    if (ids.length === 0) {
+      return [];
+    }
+
+    return this.queryIdsByLatestPaymentStatus(status, ids);
+  }
+
+  /**
+   * The one definition of "latest payment": newest by `createdAt DESC, id DESC`.
+   *
+   * `restrictIds` only narrows the outer join; it never changes the ordering, so
+   * the answer for a given booking is identical whichever entry point is used.
+   */
+  private async queryIdsByLatestPaymentStatus(
+    status: PaymentStatus,
+    restrictIds: string[] | null
+  ): Promise<string[]> {
+    const restriction =
+      restrictIds === null
+        ? Prisma.empty
+        : Prisma.sql`AND latest.bookingId IN (${Prisma.join(restrictIds)})`;
+
     const rows = await prisma.$queryRaw<{ bookingId: string }[]>`
       SELECT latest.bookingId
       FROM (
@@ -442,6 +497,7 @@ export class BookingRepository {
         FROM payments
       ) latest
       WHERE latest.rn = 1 AND latest.status = ${status}
+      ${restriction}
     `;
 
     return rows.map(row => row.bookingId);
@@ -625,6 +681,76 @@ export class BookingRepository {
       }
 
       return { cancelledIds, skippedIds };
+    });
+  }
+
+  /**
+   * Load the confirm-relevant fields for a batch of booking ids.
+   *
+   * One query for the whole batch — never a `findById` per id. Same shape as
+   * `findCancelTargets`, and the same reason `status` is read here: it is the
+   * value the guarded write below must match.
+   */
+  async findConfirmTargets(ids: string[]): Promise<AdminConfirmTargetRow[]> {
+    return prisma.booking.findMany({
+      where: { id: { in: ids } },
+      select: { id: true, bookingCode: true, status: true },
+    });
+  }
+
+  /**
+   * Confirm a batch of bookings in one transaction.
+   *
+   * Each status write is guarded with `where: { id, status: <status we read> }`,
+   * exactly like `cancelManyAsAdmin`, so a row that moved on between the
+   * classification read and this write returns `count: 0` and is reported as
+   * skipped instead of being claimed by this admin. Never `update` by id alone.
+   *
+   * Seats move in the *same* transaction as the status, so a booking can never
+   * end up `CONFIRMED` with its seats left `HELD` (or vice versa). The seat count
+   * is per booking and is allowed to be zero: `releaseExpiredHolds` deletes HELD
+   * rows whose `lockedUntil` passed, so a paid booking can legitimately arrive
+   * here with nothing left to lock. Returning the count — rather than assuming
+   * success — is what lets the caller surface that exposure. Seats are never
+   * re-acquired or re-priced here; that would be a different, un-authorised act.
+   *
+   * Statements: one `updateMany` (+ one seat `updateMany`) per target (≤50,
+   * primary-key equality), all inside one transaction.
+   */
+  async confirmManyAsAdmin(targets: AdminConfirmTargetRow[]): Promise<AdminConfirmManyResult> {
+    return prisma.$transaction(async tx => {
+      const confirmedIds: string[] = [];
+      const skippedIds: string[] = [];
+      const seatsConfirmedByBookingId: Record<string, number> = {};
+      const confirmedAt = new Date();
+
+      for (const target of targets) {
+        const updated = await tx.booking.updateMany({
+          where: { id: target.id, status: target.status },
+          data: {
+            status: BookingStatus.CONFIRMED,
+            confirmedAt,
+          },
+        });
+
+        if (updated.count !== 1) {
+          skippedIds.push(target.id);
+          continue;
+        }
+
+        const seats = await tx.bookingSeat.updateMany({
+          where: {
+            bookingId: target.id,
+            status: SeatStatus.HELD,
+          },
+          data: { status: SeatStatus.BOOKED },
+        });
+
+        confirmedIds.push(target.id);
+        seatsConfirmedByBookingId[target.id] = seats.count;
+      }
+
+      return { confirmedIds, skippedIds, seatsConfirmedByBookingId };
     });
   }
 
