@@ -106,6 +106,13 @@ export interface AdminRoute {
   price: number;
   status: RouteStatus;
   seatDataAvailable: boolean;
+  /**
+   * Whether the route row has a `busTemplateId`. Deliberately distinct from
+   * `seatDataAvailable`: that flag is also false when an id exists but its
+   * template row and seat definitions are gone, so on its own it cannot tell
+   * an admin "this route has no template" from "this template's seats vanished".
+   */
+  hasBusTemplate: boolean;
 }
 
 /** Contract Shape 3 — AdminOperator, derived from `User` where `role=OPERATOR`. */

@@ -506,6 +506,10 @@ export class RouteService {
       price: row.price.toNumber(),
       status: row.status,
       seatDataAvailable: seatData.totalSeats !== null,
+      // Straight from the already-selected column — no extra query. `seatDataAvailable`
+      // alone is ambiguous: false both for "no template id" and for "id whose
+      // template row and seats are gone".
+      hasBusTemplate: row.busTemplateId !== null,
     };
   }
 

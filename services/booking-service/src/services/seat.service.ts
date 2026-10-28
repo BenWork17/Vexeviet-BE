@@ -58,7 +58,7 @@ export class SeatService {
     }
 
     if (!route.busTemplate) {
-      throw new Error('Bus template not found for this route');
+      throw this.seatTemplateRequiredError(routeId);
     }
 
     const templateSeats = route.busTemplate.seats;
@@ -239,7 +239,7 @@ export class SeatService {
     }
 
     if (!route.busTemplate) {
-      throw new Error('Bus template not found for this route');
+      throw this.seatTemplateRequiredError(routeId);
     }
 
     // Get valid seat numbers from the template
@@ -286,7 +286,7 @@ export class SeatService {
     }
 
     if (!route.busTemplate) {
-      throw new NotFoundError('Bus template for route', routeId);
+      throw this.seatTemplateRequiredError(routeId);
     }
 
     const validSeatNumbers = new Set(route.busTemplate.seats.map(seat => seat.seatNumber));
@@ -342,7 +342,7 @@ export class SeatService {
     }
 
     if (!route.busTemplateId) {
-      throw new NotFoundError('Bus template for route', routeId);
+      throw this.seatTemplateRequiredError(routeId);
     }
 
     const date = this.parseDepartureDate(departureDate);
@@ -367,6 +367,23 @@ export class SeatService {
     });
 
     return result;
+  }
+
+  /**
+   * A route with no seat template cannot produce or validate a seat map.
+   *
+   * This is a state of the data, not a server fault: a bare `Error` here used
+   * to surface as `500` through `errorHandler`, which pages an operator for
+   * something no retry fixes. `NotFoundError` maps to `404` and the message
+   * tells the caller what to do about it. Shared by every site that needs
+   * `busTemplate`, so the four answers cannot drift apart again.
+   */
+  private seatTemplateRequiredError(routeId: string): NotFoundError {
+    return new NotFoundError(
+      'Bus template for route',
+      routeId,
+      `Route '${routeId}' has no seat template. A seat template must be assigned to this route before seats can be shown, validated, blocked or unblocked.`
+    );
   }
 
   /**
