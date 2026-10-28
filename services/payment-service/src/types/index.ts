@@ -251,12 +251,20 @@ export interface BookingResyncResponse {
  *   PENDING, i.e. the confirm never landed.
  * - `BOOKING_NOT_CANCELLED` — the payment is FAILED/CANCELLED/EXPIRED but the
  *   booking is still PENDING or CONFIRMED, i.e. the failure never propagated.
+ * - `PAID_BUT_CANCELLED` — the payment is COMPLETED but the booking is
+ *   CANCELLED. Money was collected for a trip that will not run and no refund
+ *   was recorded, so this row needs a human refund.
  *
  * REFUNDED/PARTIALLY_REFUNDED are deliberately never a mismatch: a refund does
  * not change the booking status, so treating one as inconsistent would report
- * every legitimate refund as an error.
+ * every legitimate refund as an error. A refund against a CANCELLED booking is
+ * in fact the *correct* outcome; only COMPLETED — money still held — is
+ * labelled `PAID_BUT_CANCELLED`.
  */
-export type ReconciliationMismatch = 'BOOKING_NOT_CONFIRMED' | 'BOOKING_NOT_CANCELLED';
+export type ReconciliationMismatch =
+  | 'BOOKING_NOT_CONFIRMED'
+  | 'BOOKING_NOT_CANCELLED'
+  | 'PAID_BUT_CANCELLED';
 
 export interface ReconciliationRow {
   paymentId: string;

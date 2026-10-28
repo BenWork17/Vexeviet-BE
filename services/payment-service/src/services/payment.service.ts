@@ -116,13 +116,18 @@ const deriveRisk = (
  *
  * REFUNDED/PARTIALLY_REFUNDED never produce a label: a refund does not change
  * the booking, so calling it a mismatch would flag every legitimate refund.
+ * That reasoning is what keeps a refund against a CANCELLED booking out of the
+ * `PAID_BUT_CANCELLED` label too — refunding a cancelled trip is the correct
+ * outcome, not a fault. Only COMPLETED (money still held) is labelled there.
  */
 export const classifyMismatch = (
   paymentStatus: PaymentStatus,
   bookingStatus: BookingStatus
 ): ReconciliationMismatch | null => {
   if (paymentStatus === PaymentStatus.COMPLETED) {
-    return bookingStatus === BookingStatus.PENDING ? 'BOOKING_NOT_CONFIRMED' : null;
+    if (bookingStatus === BookingStatus.PENDING) return 'BOOKING_NOT_CONFIRMED';
+    if (bookingStatus === BookingStatus.CANCELLED) return 'PAID_BUT_CANCELLED';
+    return null;
   }
 
   if (
