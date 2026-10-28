@@ -371,6 +371,78 @@ export interface AdminBulkCancelResponse {
   summary: AdminBulkCancelSummary;
 }
 
+/**
+ * Body of `POST /bookings/admin/confirm` (bulk).
+ *
+ * No `reason`: a bulk cancel requires one because it destroys a booking and its
+ * seats, which must be attributable to a stated justification. Confirming only
+ * completes a sale whose money already arrived, so there is nothing to justify.
+ */
+export interface AdminBulkConfirmRequest {
+  ids: string[];
+}
+
+/**
+ * Per-item failure codes for a bulk confirm.
+ *
+ * `PAYMENT_NOT_COMPLETED` is deliberately its own code rather than folded into
+ * `CONFLICT`: an admin selecting 20 rows needs to see which of them lack the
+ * money, separately from the rows that simply are not `PENDING` any more.
+ */
+export type AdminBulkConfirmErrorCode = 'NOT_FOUND' | 'CONFLICT' | 'PAYMENT_NOT_COMPLETED';
+
+/**
+ * Warning attached to a confirm that succeeded with no seats moved.
+ *
+ * `releaseExpiredHolds` deletes `HELD` rows once `lockedUntil` passes, so a paid
+ * booking can reach the confirm with nothing left to lock. The status transition
+ * genuinely happened (`ok: true`), but the booking has no seats held for it —
+ * a double-booking exposure that must not be reported as a clean success.
+ */
+export type AdminBulkConfirmItemWarning = 'SEATS_NOT_CONFIRMED';
+
+/**
+ * One successful item of a bulk confirm.
+ *
+ * `seatsConfirmed` is the number of `HELD` rows actually moved to `BOOKED`.
+ * Zero is a normal value, not an error: see `warning`.
+ */
+export interface AdminBulkConfirmItemSuccess {
+  id: string;
+  ok: true;
+  status: 'CONFIRMED';
+  seatsConfirmed: number;
+  warning?: AdminBulkConfirmItemWarning;
+}
+
+/** One failed item of a bulk confirm; the rest of the batch still runs. */
+export interface AdminBulkConfirmItemFailure {
+  id: string;
+  ok: false;
+  code: AdminBulkConfirmErrorCode;
+  message: string;
+}
+
+export type AdminBulkConfirmItem = AdminBulkConfirmItemSuccess | AdminBulkConfirmItemFailure;
+
+/** Totals for a bulk confirm. */
+export interface AdminBulkConfirmSummary {
+  requested: number;
+  confirmed: number;
+  failed: number;
+  /**
+   * How many of the `confirmed` bookings moved no seats. The per-item
+   * `warning` names which ones; this is the headline an operator scans for.
+   */
+  seatsNotConfirmed: number;
+}
+
+/** `data` payload of `POST /bookings/admin/confirm`. */
+export interface AdminBulkConfirmResponse {
+  results: AdminBulkConfirmItem[];
+  summary: AdminBulkConfirmSummary;
+}
+
 // =====================================================
 // ADMIN SEAT MAINTENANCE BLOCKING (`Khóa ghế bảo trì`)
 // =====================================================

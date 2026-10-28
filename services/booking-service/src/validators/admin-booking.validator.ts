@@ -6,6 +6,7 @@ import type {
   AdminBookingSort,
   AdminBookingNotesRequest,
   AdminBulkCancelRequest,
+  AdminBulkConfirmRequest,
   AdminCancelBookingRequest,
 } from '../types';
 
@@ -75,7 +76,12 @@ export const adminDashboardQuerySchema = z.object({
  */
 export const ADMIN_BOOKING_NOTES_MAX_LENGTH = 2000;
 
-/** Upper bound for a bulk-cancel batch; an unbounded batch is a DB DoS lever. */
+/**
+ * Upper bound for a bulk admin batch; an unbounded batch is a DB DoS lever.
+ *
+ * Bulk cancel and bulk confirm share this one value — a second constant with the
+ * same number would be a limit that silently drifts from this one.
+ */
 export const ADMIN_BULK_CANCEL_MAX_IDS = 50;
 
 /** A stated reason is required: an admin cancellation without one is unauditable. */
@@ -106,6 +112,29 @@ export const adminBulkCancelSchema = z.object({
       message: 'ids must not contain duplicates',
     }),
   reason: adminCancelReason,
+});
+
+/**
+ * Body of `POST /api/v1/bookings/admin/confirm` (bulk, 1..50 unique uuids).
+ *
+ * Same shape and the same cap as bulk cancel, but no `reason`: bulk cancel
+ * requires one because it destroys a booking and must be justified; a confirm
+ * only completes a sale that was already paid for.
+ */
+export const adminBulkConfirmSchema = z.object({
+  ids: z
+    .array(z.string().uuid('ids must contain uuids'), {
+      required_error: 'ids is required',
+      invalid_type_error: 'ids must be an array of uuids',
+    })
+    .min(1, 'ids must contain at least one booking id')
+    .max(
+      ADMIN_BULK_CANCEL_MAX_IDS,
+      `ids must contain at most ${ADMIN_BULK_CANCEL_MAX_IDS} booking ids`
+    )
+    .refine(ids => new Set(ids).size === ids.length, {
+      message: 'ids must not contain duplicates',
+    }),
 });
 
 /**
@@ -213,6 +242,11 @@ export interface AdminBulkCancelBodyLocals extends Record<string, unknown> {
   adminBulkCancelBody: AdminBulkCancelRequest;
 }
 
+/** `res.locals` shape after `validateAdminBulkConfirmBody` ran. */
+export interface AdminBulkConfirmBodyLocals extends Record<string, unknown> {
+  adminBulkConfirmBody: AdminBulkConfirmRequest;
+}
+
 /** `res.locals` shape after `validateAdminBookingNotesBody` ran. */
 export interface AdminBookingNotesBodyLocals extends Record<string, unknown> {
   adminBookingNotesBody: AdminBookingNotesRequest;
@@ -265,6 +299,12 @@ export const validateAdminCancelBody = validateAdminBody<AdminCancelBookingReque
 export const validateAdminBulkCancelBody = validateAdminBody<AdminBulkCancelRequest>(
   adminBulkCancelSchema,
   'adminBulkCancelBody'
+);
+
+/** Validate the admin bulk-confirm body → `res.locals.adminBulkConfirmBody`. */
+export const validateAdminBulkConfirmBody = validateAdminBody<AdminBulkConfirmRequest>(
+  adminBulkConfirmSchema,
+  'adminBulkConfirmBody'
 );
 
 /** Validate the admin notes body → `res.locals.adminBookingNotesBody`. */

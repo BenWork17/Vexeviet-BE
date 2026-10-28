@@ -21,6 +21,7 @@ import {
   validateAdminDashboardQuery,
   validateAdminCancelBody,
   validateAdminBulkCancelBody,
+  validateAdminBulkConfirmBody,
   validateAdminBookingNotesBody,
 } from '../validators/admin-booking.validator';
 import {
@@ -84,6 +85,24 @@ router.post(
   adminOnly,
   validateAdminBulkCancelBody,
   bookingController.adminBulkCancel
+);
+
+/**
+ * @route   POST /api/v1/bookings/admin/confirm
+ * @desc    Confirm a batch of bookings whose latest payment completed (per-item outcomes)
+ * @access  Private (ADMIN only)
+ *
+ * Registered **before** `/bookings/admin/:id/cancel` and above every `:id`
+ * route, for the same two independent reasons as the sibling above: this
+ * ordering, and the uuid constraint on `:id` (a literal `confirm` cannot match
+ * the uuid pattern).
+ */
+router.post(
+  '/bookings/admin/confirm',
+  authMiddleware,
+  adminOnly,
+  validateAdminBulkConfirmBody,
+  bookingController.adminBulkConfirm
 );
 
 /**

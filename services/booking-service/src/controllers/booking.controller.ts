@@ -6,6 +6,7 @@ import {
   AdminBookingQueryLocals,
   AdminBookingNotesBodyLocals,
   AdminBulkCancelBodyLocals,
+  AdminBulkConfirmBodyLocals,
   AdminCancelBodyLocals,
   AdminDashboardQueryLocals,
 } from '../validators/admin-booking.validator';
@@ -310,6 +311,41 @@ export class BookingController {
       const { ids, reason } = res.locals.adminBulkCancelBody;
 
       const result = await this.bookingService.cancelBookingsAsAdmin(ids, req.user, reason);
+
+      res.status(200).json({
+        success: true,
+        data: result,
+      });
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  /**
+   * Admin: confirm a batch of bookings in one request
+   * POST /api/v1/bookings/admin/confirm
+   *
+   * Always `200` with a per-item outcome list when the body is valid: an
+   * unpaid or moved-on booking is reported on its own item, never as a batch
+   * failure.
+   */
+  adminBulkConfirm = async (
+    req: AuthRequest,
+    res: Response<unknown, AdminBulkConfirmBodyLocals>,
+    next: NextFunction
+  ): Promise<void> => {
+    try {
+      if (!req.user) {
+        res.status(401).json({
+          success: false,
+          error: { code: 'UNAUTHORIZED', message: 'Authentication required' },
+        });
+        return;
+      }
+
+      const { ids } = res.locals.adminBulkConfirmBody;
+
+      const result = await this.bookingService.confirmBookingsAsAdmin(ids, req.user);
 
       res.status(200).json({
         success: true,
