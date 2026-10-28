@@ -44,6 +44,10 @@ export class BookingController {
   /**
    * Get booking by ID
    * GET /api/v1/bookings/:id
+   *
+   * The actor's role travels with the ownership check so an OPERATOR can read a
+   * booking on its own route. The guard itself lives in the service, next to the
+   * 404-not-403 rule, so there is one authorization predicate for this row.
    */
   getById = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
     try {
@@ -51,7 +55,8 @@ export class BookingController {
       const bookingId = Array.isArray(id) ? id[0] : id;
       const booking = await this.bookingService.getBookingById(
         bookingId,
-        req.user?.userId
+        req.user?.userId,
+        req.user?.role
       );
 
       res.status(200).json({
@@ -227,16 +232,32 @@ export class BookingController {
   };
 
   /**
-   * Admin: dashboard aggregates
+   * Admin/operator: dashboard aggregates
    * GET /api/v1/bookings/admin/dashboard
+   *
+   * The actor is passed through so the service can derive an OPERATOR's scope
+   * from the token. Because the route sits behind `operatorOrAdmin`,
+   * `req.user` is always present here; the explicit 401 keeps this handler
+   * honest on its own rather than relying on the router above it.
    */
   getAdminDashboard = async (
-    _req: Request,
+    req: AuthRequest,
     res: Response<unknown, AdminDashboardQueryLocals>,
     next: NextFunction
   ): Promise<void> => {
     try {
-      const stats = await this.bookingService.getAdminDashboard(res.locals.adminDashboardDays);
+      if (!req.user) {
+        res.status(401).json({
+          success: false,
+          error: { code: 'UNAUTHORIZED', message: 'Authentication required' },
+        });
+        return;
+      }
+
+      const stats = await this.bookingService.getAdminDashboard(
+        res.locals.adminDashboardDays,
+        req.user
+      );
 
       res.status(200).json({
         success: true,

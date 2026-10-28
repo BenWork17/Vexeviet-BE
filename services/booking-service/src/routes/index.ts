@@ -55,13 +55,16 @@ router.get(
 
 /**
  * @route   GET /api/v1/bookings/admin/dashboard
- * @desc    Aggregated booking/revenue stats for the admin dashboard
- * @access  Private (ADMIN only)
+ * @desc    Aggregated booking/revenue stats for the dashboard
+ * @access  Private (ADMIN sees the platform; OPERATOR is scoped to their own routes)
+ *
+ * The scope is derived from the token inside the service — no query or path
+ * parameter participates, so there is nothing here for a caller to widen.
  */
 router.get(
   '/bookings/admin/dashboard',
   authMiddleware,
-  adminOnly,
+  operatorOrAdmin,
   validateAdminDashboardQuery,
   bookingController.getAdminDashboard
 );
