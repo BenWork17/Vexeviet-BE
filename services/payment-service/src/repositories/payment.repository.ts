@@ -46,14 +46,22 @@ export type ReconciliationPaymentRow = Prisma.PaymentGetPayload<{
  * by `skip`/`take`.
  *
  * REFUNDED/PARTIALLY_REFUNDED are absent by design: a refund does not change
- * the booking, so they are never a mismatch. Exported so this SQL rule can be
- * proven equivalent to `classifyMismatch` for every status pair.
+ * the booking, so they are never a mismatch. That is also why a refund against
+ * a CANCELLED booking is absent — refunding a cancelled trip is the correct
+ * outcome, and flagging it would report every properly-handled refund. Only
+ * COMPLETED (money still held) is matched against CANCELLED, as
+ * `PAID_BUT_CANCELLED`. Exported so this SQL rule can be proven equivalent to
+ * `classifyMismatch` for every status pair.
  */
 export const RECONCILIATION_WHERE: Prisma.PaymentWhereInput = {
   OR: [
     {
       status: PaymentStatus.COMPLETED,
       booking: { status: BookingStatus.PENDING },
+    },
+    {
+      status: PaymentStatus.COMPLETED,
+      booking: { status: BookingStatus.CANCELLED },
     },
     {
       status: {
