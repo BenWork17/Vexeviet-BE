@@ -52,10 +52,11 @@ router.get(
   handler(paymentController.listAdminPayments)
 );
 
+// Operator-scoped summary: an OPERATOR's window covers only its own routes.
 router.get(
   '/admin/summary',
   authMiddleware,
-  adminOnly,
+  operatorOrAdmin,
   validateAdminPaymentSummary,
   handler(paymentController.getAdminPaymentSummary)
 );

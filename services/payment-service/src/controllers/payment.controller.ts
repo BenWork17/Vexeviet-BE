@@ -368,7 +368,13 @@ export class PaymentController {
     }
   };
 
-  /** GET /api/v1/payments/admin/summary — ADMIN only, enforced on the route. */
+  /**
+   * GET /api/v1/payments/admin/summary
+   *
+   * `operatorOrAdmin` has already run. An OPERATOR's totals cover only its own
+   * routes; the scope comes from the token, never from the query string. ADMIN
+   * receives the platform-wide summary exactly as before.
+   */
   getAdminPaymentSummary = async (req: Request, res: Response): Promise<void> => {
     try {
       const user = (req as AuthRequest).user;
@@ -379,7 +385,7 @@ export class PaymentController {
 
       const { days } = req.query as unknown as AdminPaymentSummaryQuery;
 
-      const summary = await paymentService.getAdminPaymentSummary(days);
+      const summary = await paymentService.getAdminPaymentSummary(days, user);
 
       res.status(200).json({
         success: true,
