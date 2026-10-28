@@ -59,8 +59,14 @@ export class NotFoundError extends Error implements AppError {
   statusCode = 404;
   code = 'NOT_FOUND';
 
-  constructor(resource: string, id?: string) {
-    super(id ? `${resource} with id '${id}' not found` : `${resource} not found`);
+  /**
+   * `message` is optional and additive: when supplied it replaces the generated
+   * `"<resource> with id '<id>' not found"` text so a caller can state what is
+   * missing in actionable terms. Every two-argument call keeps its exact
+   * previous message.
+   */
+  constructor(resource: string, id?: string, message?: string) {
+    super(message ?? (id ? `${resource} with id '${id}' not found` : `${resource} not found`));
     this.name = 'NotFoundError';
   }
 }

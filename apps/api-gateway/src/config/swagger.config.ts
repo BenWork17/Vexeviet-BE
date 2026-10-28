@@ -382,6 +382,11 @@ const options: swaggerJsdoc.Options = {
               description:
                 'false when busTemplateId is null and no seats exist (totalSeats/availableSeats are then null).',
             },
+            hasBusTemplate: {
+              type: 'boolean',
+              description:
+                'true when the route row has a busTemplateId. Distinct from seatDataAvailable, which is also false when an id exists but its template row and seat definitions are gone; a route with this false has no seat template and cannot serve a seat map (seat endpoints answer 404).',
+            },
           },
         },
         AdminUser: {
