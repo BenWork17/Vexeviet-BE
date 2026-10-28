@@ -1,6 +1,52 @@
-import { User as PrismaUser, UserRole } from '@prisma/client';
+import { User as PrismaUser, UserRole, UserStatus } from '@prisma/client';
 
 export type User = Omit<PrismaUser, 'password'>;
+
+/** Contract Shape 4 — AdminUser. Never carries credential/verification fields. */
+export interface AdminUser {
+  id: string;
+  name: string;
+  email: string;
+  phone: string | null;
+  role: UserRole;
+  status: UserStatus;
+  verified: boolean;
+  isEmailVerified: boolean;
+  isPhoneVerified: boolean;
+  createdAt: Date;
+}
+
+/** Contract Shape 5 — AuditLog, as rendered to the admin UI. */
+export interface AuditLogItem {
+  id: string;
+  actor: string;
+  actorId: string | null;
+  role: string;
+  action: string;
+  target: string;
+  severity: 'info' | 'warning' | 'danger';
+  metadata: unknown;
+  createdAt: Date;
+}
+
+export interface Pagination {
+  page: number;
+  limit: number;
+  total: number;
+  totalPages: number;
+}
+
+/**
+ * Response of `POST /users/admin/:id/resend-verification`.
+ *
+ * Deliberately carries the id and a fixed message only: the verification code
+ * must never leave the service.
+ */
+export interface AdminResendVerificationResult {
+  id: string;
+  message: string;
+}
+
 
 export interface RegisterRequest {
   method: 'email' | 'phone';

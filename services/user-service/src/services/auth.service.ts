@@ -2,9 +2,28 @@ import * as crypto from 'crypto';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import { UserRole } from '@prisma/client';
+import { writeAuditLog } from '@vexeviet/database';
 import { RegisterRequest, LoginRequest, AuthResponse, TokenPayload } from '../types';
 import { UserRepository } from '../repositories/user.repository';
 import { RefreshTokenRepository } from '../repositories/refresh-token.repository';
+import { CryptoUtils } from '../utils/crypto';
+import { emailService } from '../utils/email';
+import { passwordResetService } from './password-reset.service';
+
+/** One message for unknown, expired and already-used tokens — they must not be
+ * distinguishable. Names the field so the client knows what to re-request. */
+const RESET_TOKEN_REJECTED = 'token is invalid or has expired';
+
+/** Raised with an explicit status so a controller does not have to guess. */
+export class AuthServiceError extends Error {
+  public readonly statusCode: number;
+
+  constructor(message: string, statusCode: number) {
+    super(message);
+    this.name = 'AuthServiceError';
+    this.statusCode = statusCode;
+  }
+}
 
 export class AuthService {
   private readonly JWT_SECRET = process.env.JWT_SECRET || 'dev-secret-key';
@@ -137,6 +156,98 @@ export class AuthService {
   async logoutAll(userId: string): Promise<void> {
     // Delete all refresh tokens for user
     await this.refreshTokenRepo.deleteByUserId(userId);
+  }
+
+  /**
+   * Public `POST /auth/forgot-password`.
+   *
+   * Deliberately returns nothing: the controller replies with the same 200 body
+   * whether or not the address exists, so this endpoint cannot be used to
+   * enumerate accounts.
+   *
+   * This method writes **no** audit row. A row per request would be an
+   * unbounded write lever for anonymous traffic — there is no rate limiting on
+   * this route (P6 owns it at the gateway), and even a *known* address only
+   * costs an attacker one loop. The signal lives in
+   * `USER_PASSWORD_RESET_COMPLETED` (written on the authenticated completion)
+   * and in `USER_PASSWORD_RESET_REQUESTED` (written for the admin-initiated
+   * path, where a real actor exists).
+   */
+  async forgotPassword(email: string): Promise<void> {
+    const normalized = email.trim().toLowerCase();
+    const user = await this.userRepo.findByEmail(normalized);
+
+    if (!user) return;
+
+    const { token } = await passwordResetService.issue(user.id);
+
+    // A send failure must not change the response: reporting it would reveal
+    // that the address exists. The token simply goes unused and expires.
+    try {
+      await emailService.sendPasswordResetEmail(user.email, token);
+    } catch (error) {
+      console.error('[auth] failed to send password reset email', {
+        userId: user.id,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  /**
+   * Public `POST /auth/reset-password`.
+   *
+   * `consume()` is the atomic GETDEL, so the token is gone before any hashing
+   * work starts: a double submit cannot both succeed, and the loser gets the
+   * same 400 as an unknown token.
+   */
+  async resetPassword(token: string, newPassword: string): Promise<void> {
+    const record = await passwordResetService.consume(token);
+
+    if (!record) {
+      throw new AuthServiceError(RESET_TOKEN_REJECTED, 400);
+    }
+
+    const user = await this.userRepo.findById(record.userId);
+    if (!user) {
+      // The account went away between issue and consume. Same message: the
+      // token state must stay indistinguishable from an unknown one.
+      throw new AuthServiceError(RESET_TOKEN_REJECTED, 400);
+    }
+
+    const hashedPassword = await CryptoUtils.hashPassword(newPassword);
+    await this.userRepo.update(user.id, { password: hashedPassword });
+
+    // The single most important line: every existing refresh token dies, so a
+    // session an attacker already holds cannot be refreshed past this point.
+    await this.logoutAll(user.id);
+
+    await this.emitAudit({
+      actorId: user.id,
+      actorName: `${user.firstName} ${user.lastName}`.trim() || user.email,
+      actorRole: user.role,
+      action: 'USER_PASSWORD_RESET_COMPLETED',
+      target: `user:${user.email}`,
+      targetId: user.id,
+      severity: 'WARNING',
+      // No password, no hash, no token — only the fact and the revocation.
+      metadata: { sessionsRevoked: true },
+    });
+  }
+
+  /**
+   * `writeAuditLog` is non-throwing by contract; this wrapper keeps an audit
+   * failure from ever failing the request even if that helper regresses.
+   */
+  private async emitAudit(input: Parameters<typeof writeAuditLog>[0]): Promise<void> {
+    try {
+      await writeAuditLog(input);
+    } catch (error) {
+      console.error('[auth] failed to write audit log', {
+        action: input.action,
+        target: input.target,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
   }
 
   private async generateTokens(
