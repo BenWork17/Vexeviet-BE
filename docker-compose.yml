@@ -105,11 +105,14 @@ services:
     restart: unless-stopped
     environment:
       NODE_ENV: production
-      PAYMENT_SERVICE_PORT: "3003"
+      PAYMENT_SERVICE_PORT: "3004"
       DATABASE_URL: mysql://${MYSQL_USER:-vexeviet_user}:${MYSQL_PASSWORD:-securepassword}@mysql:3306/${MYSQL_DATABASE:-vexeviet}
       REDIS_HOST: redis
       REDIS_PORT: "6379"
-      BOOKING_SERVICE_URL: ${BOOKING_SERVICE_URL:-http://booking-service:3004/api/v1}
+      # LUU Y: khong co container `booking-service` trong file compose nay, nen host
+      # `booking-service` khong resolve duoc trong network; payment -> booking se loi
+      # cho toi khi mot booking-service duoc them (hoac URL nay duoc override tu ngoai).
+      BOOKING_SERVICE_URL: ${BOOKING_SERVICE_URL:-http://booking-service:3003/api/v1}
       # VNPay sandbox (khong commit secret that su - doc .env)
       VNPAY_TMN_CODE: ${VNPAY_TMN_CODE:-}
       VNPAY_HASH_SECRET: ${VNPAY_HASH_SECRET:-}
@@ -122,7 +125,7 @@ services:
       WAIT_FOR_DB_TIMEOUT: "120"
       RUN_MIGRATIONS: "false"
     ports:
-      - "3003:3003"
+      - "3004:3004"
     volumes:
       - payment_service_logs:/app/logs
     depends_on:
