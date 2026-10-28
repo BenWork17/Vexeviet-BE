@@ -2,6 +2,13 @@ import { Request, Response, NextFunction } from 'express';
 import { BookingService } from '../services/booking.service';
 import { AuthRequest } from '../middlewares/auth.middleware';
 import { CreateBookingRequest, BookingQuery, CancelBookingRequest, BookingStatus } from '../types';
+import {
+  AdminBookingQueryLocals,
+  AdminBookingNotesBodyLocals,
+  AdminBulkCancelBodyLocals,
+  AdminCancelBodyLocals,
+  AdminDashboardQueryLocals,
+} from '../validators/admin-booking.validator';
 
 export class BookingController {
   private bookingService: BookingService;
@@ -177,6 +184,172 @@ export class BookingController {
         success: true,
         data: booking,
         message: 'Booking marked as payment failed',
+      });
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  /**
+   * Admin: list all bookings
+   * GET /api/v1/bookings/admin/all
+   *
+   * Query params are validated/clamped by `validateAdminBookingQuery`, which
+   * leaves the parsed result on `res.locals`.
+   */
+  getAdminBookings = async (
+    req: AuthRequest,
+    res: Response<unknown, AdminBookingQueryLocals>,
+    next: NextFunction
+  ): Promise<void> => {
+    try {
+      if (!req.user) {
+        res.status(401).json({
+          success: false,
+          error: { code: 'UNAUTHORIZED', message: 'Authentication required' },
+        });
+        return;
+      }
+
+      const result = await this.bookingService.getAdminBookings(
+        req.user,
+        res.locals.adminBookingQuery
+      );
+
+      res.status(200).json({
+        success: true,
+        ...result,
+      });
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  /**
+   * Admin: dashboard aggregates
+   * GET /api/v1/bookings/admin/dashboard
+   */
+  getAdminDashboard = async (
+    _req: Request,
+    res: Response<unknown, AdminDashboardQueryLocals>,
+    next: NextFunction
+  ): Promise<void> => {
+    try {
+      const stats = await this.bookingService.getAdminDashboard(res.locals.adminDashboardDays);
+
+      res.status(200).json({
+        success: true,
+        data: stats,
+      });
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  /**
+   * Admin: cancel any booking regardless of its owner
+   * POST /api/v1/bookings/admin/:id/cancel
+   *
+   * The reason is required and validated by `validateAdminCancelBody`, which
+   * leaves the trimmed body on `res.locals.adminCancelBody`.
+   */
+  adminCancel = async (
+    req: AuthRequest,
+    res: Response<unknown, AdminCancelBodyLocals>,
+    next: NextFunction
+  ): Promise<void> => {
+    try {
+      if (!req.user) {
+        res.status(401).json({
+          success: false,
+          error: { code: 'UNAUTHORIZED', message: 'Authentication required' },
+        });
+        return;
+      }
+
+      const { id } = req.params;
+      const bookingId = Array.isArray(id) ? id[0] : id;
+
+      const booking = await this.bookingService.cancelBookingAsAdmin(
+        bookingId,
+        req.user,
+        res.locals.adminCancelBody.reason
+      );
+
+      res.status(200).json({
+        success: true,
+        data: booking,
+        message: 'Booking cancelled successfully',
+      });
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  /**
+   * Admin: cancel a batch of bookings in one request
+   * POST /api/v1/bookings/admin/cancel
+   *
+   * Always `200` with a per-item outcome list when the body is valid: one
+   * failing booking must not turn the batch into an all-or-nothing error.
+   */
+  adminBulkCancel = async (
+    req: AuthRequest,
+    res: Response<unknown, AdminBulkCancelBodyLocals>,
+    next: NextFunction
+  ): Promise<void> => {
+    try {
+      if (!req.user) {
+        res.status(401).json({
+          success: false,
+          error: { code: 'UNAUTHORIZED', message: 'Authentication required' },
+        });
+        return;
+      }
+
+      const { ids, reason } = res.locals.adminBulkCancelBody;
+
+      const result = await this.bookingService.cancelBookingsAsAdmin(ids, req.user, reason);
+
+      res.status(200).json({
+        success: true,
+        data: result,
+      });
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  /**
+   * Admin: set or clear the internal note on a booking
+   * PATCH /api/v1/bookings/admin/:id/notes
+   */
+  adminNotes = async (
+    req: AuthRequest,
+    res: Response<unknown, AdminBookingNotesBodyLocals>,
+    next: NextFunction
+  ): Promise<void> => {
+    try {
+      if (!req.user) {
+        res.status(401).json({
+          success: false,
+          error: { code: 'UNAUTHORIZED', message: 'Authentication required' },
+        });
+        return;
+      }
+
+      const { id } = req.params;
+      const bookingId = Array.isArray(id) ? id[0] : id;
+
+      const booking = await this.bookingService.updateBookingNotesAsAdmin(
+        bookingId,
+        req.user,
+        res.locals.adminBookingNotesBody.notes
+      );
+
+      res.status(200).json({
+        success: true,
+        data: booking,
       });
     } catch (error) {
       next(error);

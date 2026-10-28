@@ -1,9 +1,22 @@
 import { v4 as uuidv4 } from 'uuid';
 import { customAlphabet } from 'nanoid';
 import { config } from '../config';
-import { BookingRepository } from '../repositories/booking.repository';
+import {
+  BookingRepository,
+  type AdminBookingRow,
+  type AdminCancelTargetRow,
+  type BookingDetailRow,
+} from '../repositories/booking.repository';
 import { SeatRepository } from '../repositories/seat.repository';
-import { prisma, Prisma, BookingStatus, SeatStatus, RouteStatus, Route } from '@vexeviet/database';
+import {
+  prisma,
+  Prisma,
+  BookingStatus,
+  SeatStatus,
+  RouteStatus,
+  Route,
+  writeAuditLog,
+} from '@vexeviet/database';
 import {
   CreateBookingRequest,
   CreateBookingResponse,
@@ -11,6 +24,13 @@ import {
   BookingQuery,
   PaginatedResponse,
   PriceBreakdown,
+  TokenPayload,
+  AdminBooking,
+  AdminBookingQuery,
+  AdminDashboardStats,
+  AdminBulkCancelItem,
+  AdminBulkCancelResponse,
+  DashboardPoint,
 } from '../types';
 import {
   NotFoundError,
@@ -336,6 +356,19 @@ export class BookingService {
 
     await this.seatRepo.confirmSeatsByBookingId(bookingId);
 
+    // Audit row emitted at the actual status transition (PENDING → CONFIRMED).
+    // `writeAuditLog` never throws, so it cannot fail this request.
+    await writeAuditLog({
+      actorId: null,
+      actorName: 'SYSTEM',
+      actorRole: 'SYSTEM',
+      action: 'BOOKING_CONFIRMED',
+      target: `booking:${booking.bookingCode}`,
+      targetId: booking.id,
+      severity: 'INFO',
+      metadata: { bookingCode: booking.bookingCode, previousStatus: booking.status },
+    });
+
     return this.formatBookingDetailResponse(updatedBooking);
   }
 
@@ -357,7 +390,614 @@ export class BookingService {
 
     await this.seatRepo.releaseSeatsByBookingId(bookingId);
 
+    // Audit row emitted at the actual status transition (→ CANCELLED by payment failure).
+    await writeAuditLog({
+      actorId: null,
+      actorName: 'SYSTEM',
+      actorRole: 'SYSTEM',
+      action: 'BOOKING_PAYMENT_FAILED',
+      target: `booking:${booking.bookingCode}`,
+      targetId: booking.id,
+      severity: 'WARNING',
+      metadata: {
+        bookingCode: booking.bookingCode,
+        previousStatus: booking.status,
+        reason: reason ?? 'Payment failed',
+      },
+    });
+
     return this.formatBookingDetailResponse(updatedBooking);
+  }
+
+  // =====================================================
+  // ADMIN
+  // =====================================================
+
+  /**
+   * Paginated admin booking list (contract Shape 1).
+   *
+   * Scoping: an OPERATOR token is forced to `route.operatorId === token.userId`
+   * and any `operatorId` query param is discarded. ADMIN sees everything and may
+   * narrow by `operatorId`.
+   */
+  async getAdminBookings(
+    actor: TokenPayload,
+    query: AdminBookingQuery
+  ): Promise<PaginatedResponse<AdminBooking>> {
+    const page = query.page;
+    const limit = query.limit;
+    const skip = (page - 1) * limit;
+
+    const where = this.buildAdminWhere(actor, query);
+
+    // `paymentStatus` filters on the booking's *latest* payment (same rule the
+    // response field uses), which Prisma's relation filters cannot express
+    // exactly. It is resolved to an ID set in one aggregate query — never a
+    // per-row lookup.
+    if (query.paymentStatus) {
+      const ids = await this.bookingRepo.findIdsByLatestPaymentStatus(query.paymentStatus);
+
+      if (ids.length === 0) {
+        return {
+          data: [],
+          pagination: { page, limit, total: 0, totalPages: 0 },
+        };
+      }
+
+      where.id = { in: ids };
+    }
+
+    const orderBy: Prisma.BookingOrderByWithRelationInput = this.buildAdminOrderBy(query.sort);
+
+    const [rows, total] = await Promise.all([
+      this.bookingRepo.findAdminPage({ where, orderBy, skip, take: limit }),
+      this.bookingRepo.countAdmin(where),
+    ]);
+
+    return {
+      data: rows.map(row => this.formatAdminBooking(row)),
+      pagination: {
+        page,
+        limit,
+        total,
+        totalPages: Math.ceil(total / limit),
+      },
+    };
+  }
+
+  /**
+   * Dashboard aggregates (contract Shape 1 dashboard).
+   *
+   * Window = `days` calendar days ending today, `[startOfDay(days-1 ago), startOfTomorrow)`.
+   * Every time-scoped figure (revenue, payments needing action, revenue trend,
+   * status summary) uses that window; `activeRoutes` / `operatorCount` are
+   * current-state counts.
+   */
+  async getAdminDashboard(days: number): Promise<AdminDashboardStats> {
+    const { from, to, dayStarts } = this.buildWindow(days);
+
+    const [
+      todayBookings,
+      revenueCompleted,
+      paymentsNeedingAction,
+      activeRoutes,
+      operatorCount,
+      revenueRows,
+      statusGroups,
+    ] = await Promise.all([
+      this.bookingRepo.countCreatedSince(this.startOfToday()),
+      this.bookingRepo.sumCompletedPayments(from, to),
+      this.bookingRepo.countPaymentsNeedingAction(from, to),
+      this.bookingRepo.countActiveRoutes(),
+      this.bookingRepo.countActiveOperators(),
+      // Day buckets must use the same "local day" definition as the labels
+      // below and as "today 00:00 local", so the offset is passed explicitly.
+      this.bookingRepo.findRevenueTrend(from, to, this.localUtcOffsetMinutes(from)),
+      this.bookingRepo.countByStatusSince(from),
+    ]);
+
+    // Zero-fill: one point per day in the window, in chronological order.
+    const revenueByDay = new Map<string, Prisma.Decimal>();
+    for (const row of revenueRows) {
+      revenueByDay.set(row.day, row.total ?? new Prisma.Decimal(0));
+    }
+
+    const revenueTrend: DashboardPoint[] = dayStarts.map(day => ({
+      label: day.label,
+      value: Math.round(Number(revenueByDay.get(day.label) ?? 0)),
+    }));
+
+    const bookingStatusSummary: DashboardPoint[] = statusGroups.map(group => ({
+      label: group.status,
+      value: group.count,
+    }));
+
+    return {
+      todayBookings,
+      revenueCompleted: Math.round(Number(revenueCompleted)),
+      paymentsNeedingAction,
+      activeRoutes,
+      operatorCount,
+      revenueTrend,
+      bookingStatusSummary,
+    };
+  }
+
+  // =====================================================
+  // ADMIN ACTIONS
+  // =====================================================
+
+  /**
+   * Cancel any booking on behalf of an ADMIN.
+   *
+   * Deliberately a *separate* method from `cancelBooking`: the customer path
+   * hides the existence of other users' bookings (`booking.userId !== userId` →
+   * `NotFoundError`) and that security property must not be relaxed for
+   * `POST /bookings/:id/cancel`. This path has no ownership check at all, which
+   * is exactly why it is reachable only behind `adminOnly`.
+   *
+   * Status rules are the same ones the customer path applies.
+   */
+  async cancelBookingAsAdmin(
+    bookingId: string,
+    actor: TokenPayload,
+    reason: string
+  ): Promise<BookingDetailResponse> {
+    const booking = await this.bookingRepo.findById(bookingId);
+
+    if (!booking) {
+      throw new NotFoundError('Booking', bookingId);
+    }
+
+    if (booking.status === BookingStatus.CANCELLED) {
+      throw new ConflictError('Booking is already cancelled');
+    }
+
+    if (booking.status === BookingStatus.COMPLETED) {
+      throw new ConflictError('Cannot cancel completed booking');
+    }
+
+    const previousStatus = booking.status;
+
+    let updatedBooking: BookingDetailRow;
+
+    try {
+      updatedBooking = await this.bookingRepo.cancelAsAdmin(bookingId, previousStatus, reason);
+    } catch (error) {
+      // P2025: the row no longer matches `{ id, status: previousStatus }` — it
+      // moved on between the read above and this write. Report a conflict
+      // rather than claim a cancellation that did not happen.
+      if (this.isRecordNotFound(error)) {
+        throw new ConflictError('Booking status changed before it could be cancelled');
+      }
+
+      throw error;
+    }
+
+    await this.seatRepo.releaseSeatsByBookingId(bookingId);
+
+    // Emitted after the write succeeded; `writeAuditLog` never throws.
+    const auditActor = await this.resolveAuditActor(actor);
+
+    await writeAuditLog({
+      actorId: auditActor.actorId,
+      actorName: auditActor.actorName,
+      actorRole: auditActor.actorRole,
+      action: 'BOOKING_CANCELLED',
+      target: `booking:${booking.bookingCode}`,
+      targetId: booking.id,
+      severity: 'WARNING',
+      metadata: {
+        bookingCode: booking.bookingCode,
+        previousStatus,
+        reason,
+        adminOverride: true,
+      },
+    });
+
+    return this.formatBookingDetailResponse(updatedBooking);
+  }
+
+  /**
+   * Cancel a batch of bookings on behalf of an ADMIN.
+   *
+   * Per-item and independent: one conflict never aborts the rest. Work is
+   * bounded — one `findMany` for the whole batch, then a single transaction
+   * that cancels every eligible row and releases their seats together.
+   */
+  async cancelBookingsAsAdmin(
+    ids: string[],
+    actor: TokenPayload,
+    reason: string
+  ): Promise<AdminBulkCancelResponse> {
+    const targets = await this.bookingRepo.findCancelTargets(ids);
+    const targetById = new Map(targets.map(target => [target.id, target]));
+
+    const results = new Map<string, AdminBulkCancelItem>();
+    const cancellable: AdminCancelTargetRow[] = [];
+
+    for (const id of ids) {
+      const target = targetById.get(id);
+
+      if (!target) {
+        results.set(id, {
+          id,
+          ok: false,
+          code: 'NOT_FOUND',
+          message: 'Booking not found',
+        });
+        continue;
+      }
+
+      if (target.status === BookingStatus.CANCELLED) {
+        results.set(id, {
+          id,
+          ok: false,
+          code: 'CONFLICT',
+          message: 'Booking is already cancelled',
+        });
+        continue;
+      }
+
+      if (target.status === BookingStatus.COMPLETED) {
+        results.set(id, {
+          id,
+          ok: false,
+          code: 'CONFLICT',
+          message: 'Cannot cancel completed booking',
+        });
+        continue;
+      }
+
+      cancellable.push(target);
+    }
+
+    if (cancellable.length > 0) {
+      const { cancelledIds, skippedIds } = await this.bookingRepo.cancelManyAsAdmin(
+        cancellable,
+        reason
+      );
+
+      if (cancelledIds.length > 0) {
+        const auditActor = await this.resolveAuditActor(actor);
+
+        for (const id of cancelledIds) {
+          const target = targetById.get(id);
+
+          if (!target) {
+            continue;
+          }
+
+          results.set(id, { id, ok: true, status: 'CANCELLED' });
+
+          // One audit row per cancelled booking, so the trail names every
+          // booking rather than just the batch.
+          await writeAuditLog({
+            actorId: auditActor.actorId,
+            actorName: auditActor.actorName,
+            actorRole: auditActor.actorRole,
+            action: 'BOOKING_CANCELLED',
+            target: `booking:${target.bookingCode}`,
+            targetId: target.id,
+            severity: 'WARNING',
+            metadata: {
+              bookingCode: target.bookingCode,
+              previousStatus: target.status,
+              reason,
+              adminOverride: true,
+            },
+          });
+        }
+      }
+
+      // Raced away between the classification read and the guarded update:
+      // this call did not cancel it, so it is reported, not audited.
+      for (const id of skippedIds) {
+        results.set(id, {
+          id,
+          ok: false,
+          code: 'CONFLICT',
+          message: 'Booking status changed before it could be cancelled',
+        });
+      }
+    }
+
+    const ordered = ids
+      .map(id => results.get(id))
+      .filter((item): item is AdminBulkCancelItem => item !== undefined);
+
+    const cancelled = ordered.filter(item => item.ok).length;
+    const failed = ordered.filter(item => !item.ok).length;
+
+    return {
+      results: ordered,
+      summary: {
+        requested: ids.length,
+        cancelled,
+        failed,
+      },
+    };
+  }
+
+  /**
+   * Set or clear the internal note on a booking.
+   *
+   * Only `Booking.notes` is written — status, payment status, seats and money
+   * are untouched, so this cannot move a booking through its lifecycle.
+   */
+  async updateBookingNotesAsAdmin(
+    bookingId: string,
+    actor: TokenPayload,
+    notes: string | null
+  ): Promise<BookingDetailResponse> {
+    const booking = await this.bookingRepo.findById(bookingId);
+
+    if (!booking) {
+      throw new NotFoundError('Booking', bookingId);
+    }
+
+    const previousNotesChanged = (booking.notes ?? null) !== notes;
+
+    const updatedBooking = await this.bookingRepo.updateNotes(bookingId, notes);
+
+    const auditActor = await this.resolveAuditActor(actor);
+
+    // The note text is deliberately absent from metadata: it is operator
+    // free-text that may contain customer data, and the booking row holds it.
+    await writeAuditLog({
+      actorId: auditActor.actorId,
+      actorName: auditActor.actorName,
+      actorRole: auditActor.actorRole,
+      action: 'BOOKING_NOTE_UPDATED',
+      target: `booking:${booking.bookingCode}`,
+      targetId: booking.id,
+      severity: 'INFO',
+      metadata: {
+        bookingCode: booking.bookingCode,
+        previousNotesChanged,
+      },
+    });
+
+    return this.formatBookingDetailResponse(updatedBooking);
+  }
+
+  /**
+   * True when `error` is Prisma's P2025 ("record to update not found").
+   *
+   * Duck-typed rather than `instanceof Prisma.PrismaClientKnownRequestError` so
+   * it still holds if the generated client is duplicated in the module graph
+   * (a second copy makes `instanceof` silently false).
+   */
+  private isRecordNotFound(error: unknown): boolean {
+    return (
+      typeof error === 'object' &&
+      error !== null &&
+      'code' in error &&
+      (error as { code?: unknown }).code === 'P2025'
+    );
+  }
+
+  /**
+   * Audit actor snapshot for an admin action.
+   *
+   * `writeAuditLog` silently drops rows with a null `actorName`, so the name
+   * falls back full name → account email → token email and is never empty.
+   * Resolved once per request, not once per batch item.
+   *
+   * The lookup is best-effort: it runs *after* the business write has committed,
+   * so a failure here falls back to the token's email rather than turning a
+   * successful cancellation into a 500.
+   */
+  private async resolveAuditActor(
+    actor: TokenPayload
+  ): Promise<{ actorId: string; actorName: string; actorRole: string }> {
+    let user: Awaited<ReturnType<BookingRepository['findActorName']>> = null;
+
+    try {
+      user = await this.bookingRepo.findActorName(actor.userId);
+    } catch (error) {
+      console.error('[audit] failed to resolve actor name; falling back to token email', {
+        actorId: actor.userId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+
+    const fullName = [user?.firstName, user?.lastName]
+      .filter((part): part is string => Boolean(part && part.trim()))
+      .join(' ')
+      .trim();
+
+    return {
+      actorId: actor.userId,
+      actorName: fullName || user?.email || actor.email,
+      actorRole: actor.role,
+    };
+  }
+
+  /** Build the `where` for the admin list, applying JWT-derived operator scoping. */
+  private buildAdminWhere(
+    actor: TokenPayload,
+    query: AdminBookingQuery
+  ): Prisma.BookingWhereInput {
+    const where: Prisma.BookingWhereInput = {};
+
+    if (query.status) {
+      where.status = query.status;
+    }
+
+    // OPERATOR scoping always wins over the query param — never trust it.
+    if (actor.role === 'OPERATOR') {
+      where.route = { operatorId: actor.userId };
+    } else if (query.operatorId) {
+      where.route = { operatorId: query.operatorId };
+    }
+
+    if (query.from || query.to) {
+      where.departureDate = {
+        ...(query.from ? { gte: this.parseDateStart(query.from) } : {}),
+        ...(query.to ? { lte: this.parseDateEnd(query.to) } : {}),
+      };
+    }
+
+    if (query.q) {
+      const contains = query.q;
+      // MySQL's default collation is case-insensitive, so `contains` is already
+      // case-insensitive here (Prisma's `mode: 'insensitive'` is PostgreSQL-only).
+      where.OR = [
+        { bookingCode: { contains } },
+        {
+          user: {
+            is: {
+              OR: [
+                { email: { contains } },
+                { firstName: { contains } },
+                { lastName: { contains } },
+              ],
+            },
+          },
+        },
+        { contactEmail: { contains } },
+      ];
+    }
+
+    return where;
+  }
+
+  /** Map the contract's `sort` token to a Prisma `orderBy`. */
+  private buildAdminOrderBy(sort: AdminBookingQuery['sort']): Prisma.BookingOrderByWithRelationInput {
+    const descending = sort.startsWith('-');
+    const field = descending ? sort.slice(1) : sort;
+
+    if (field === 'departureDate') {
+      return { departureDate: descending ? 'desc' : 'asc' };
+    }
+
+    return { createdAt: descending ? 'desc' : 'asc' };
+  }
+
+  /** Map a loaded admin row to the contract's AdminBooking shape. */
+  private formatAdminBooking(row: AdminBookingRow): AdminBooking {
+    const { user, route } = row;
+
+    const fullName = [user?.firstName, user?.lastName]
+      .filter((part): part is string => Boolean(part && part.trim()))
+      .join(' ')
+      .trim();
+
+    const seatNumbers = row.seats.map(seat => seat.seatNumber);
+    const fallbackSeats = row.passengers.map(passenger => passenger.seatNumber);
+    const seats = (seatNumbers.length > 0 ? seatNumbers : fallbackSeats)
+      .slice()
+      .sort((a, b) => a.localeCompare(b));
+
+    const operatorName = [route.operator?.firstName, route.operator?.lastName]
+      .filter((part): part is string => Boolean(part && part.trim()))
+      .join(' ')
+      .trim();
+
+    return {
+      id: row.id,
+      bookingCode: row.bookingCode,
+      customerName: fullName || row.contactEmail || 'Guest',
+      customerEmail: user?.email ?? row.contactEmail,
+      customerPhone: user?.phone ?? row.contactPhone,
+      operatorId: route.operatorId,
+      operatorName: operatorName || 'Unknown Operator',
+      routeId: route.id,
+      routeName: `${route.origin} → ${route.destination}`,
+      departureDate: this.formatUtcDateOnly(row.departureDate),
+      seats,
+      status: row.status,
+      paymentStatus: row.payments[0]?.status ?? null,
+      // Decimal → number only here, at the response boundary.
+      totalAmount:
+        Math.round(
+          (Number(row.totalPrice) + Number(row.serviceFee) - Number(row.discount)) * 100
+        ) / 100,
+      createdAt: row.createdAt.toISOString(),
+    };
+  }
+
+  /** Local midnight at the start of today (contract: "today 00:00 local"). */
+  private startOfToday(): Date {
+    const now = new Date();
+    return new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  }
+
+  /**
+   * The dashboard window: `days` calendar days ending today.
+   * Returns the SQL bounds plus one zero-filled bucket per day.
+   */
+  private buildWindow(days: number): {
+    from: Date;
+    to: Date;
+    dayStarts: { label: string; at: Date }[];
+  } {
+    const today = this.startOfToday();
+    const from = new Date(today);
+    from.setDate(from.getDate() - (days - 1));
+
+    const to = new Date(today);
+    to.setDate(to.getDate() + 1);
+
+    const dayStarts: { label: string; at: Date }[] = [];
+    for (let i = 0; i < days; i += 1) {
+      const at = new Date(from);
+      at.setDate(from.getDate() + i);
+      dayStarts.push({ label: this.formatLocalDate(at), at });
+    }
+
+    return { from, to, dayStarts };
+  }
+
+  /** Minutes east of UTC for `date` (e.g. +420 for UTC+7). */
+  private localUtcOffsetMinutes(date: Date): number {
+    // getTimezoneOffset() returns minutes *behind* UTC, so negate it.
+    return -date.getTimezoneOffset();
+  }
+
+  /**
+   * Format a Date as `YYYY-MM-DD` **in UTC**.
+   *
+   * Use for values read from a `@db.Date` column: MySQL `DATE` has no time or
+   * zone, Prisma surfaces it as UTC midnight, so the UTC view is the stored day.
+   * Using local getters would shift e.g. `2026-06-08` to `2026-06-07` west of UTC.
+   */
+  private formatUtcDateOnly(value: Date): string {
+    const year = value.getUTCFullYear();
+    const month = String(value.getUTCMonth() + 1).padStart(2, '0');
+    const day = String(value.getUTCDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  }
+
+  /**
+   * Format a Date as `YYYY-MM-DD` **in the server's local zone**.
+   *
+   * Use for calendar-day buckets the service itself computes (the dashboard
+   * window), which are anchored to local midnight to match
+   * "bookings created since today 00:00 local".
+   */
+  private formatLocalDate(value: Date): string {
+    const year = value.getFullYear();
+    const month = String(value.getMonth() + 1).padStart(2, '0');
+    const day = String(value.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  }
+
+  /**
+   * Start of the given ISO date, as UTC midnight.
+   *
+   * `booking.departureDate` is a `@db.Date` column, which Prisma compares as UTC
+   * midnight — a local-midnight bound would clip or admit a day at the edges
+   * depending on the server's zone.
+   */
+  private parseDateStart(value: string): Date {
+    return new Date(`${value.slice(0, 10)}T00:00:00.000Z`);
+  }
+
+  /** End of the given ISO date, as UTC end-of-day (inclusive). */
+  private parseDateEnd(value: string): Date {
+    return new Date(`${value.slice(0, 10)}T23:59:59.999Z`);
   }
 
   /**
