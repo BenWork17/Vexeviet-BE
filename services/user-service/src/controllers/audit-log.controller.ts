@@ -46,18 +46,39 @@ const CSV_COLUMNS = [
 ] as const;
 
 /**
+ * First characters Excel/Google Sheets treat as the start of a formula: `=` and
+ * `@` are formula introducers, `+`/`-` are arithmetic, and a leading TAB or CR
+ * is stripped by some importers before the formula check runs.
+ */
+const FORMULA_LEADING = /^[=+\-@\t\r]/;
+
+/**
  * Render one CSV field.
  *
  * RFC 4180: a field containing a comma, a double quote, CR or LF is wrapped in
  * double quotes, and any embedded double quote is doubled. Every field —
  * including the header row — goes through here so no cell can break the
  * record/field structure.
+ *
+ * Spreadsheet formula injection is neutralised first: a value whose first
+ * character is `=`, `+`, `-`, `@`, TAB or CR gets a leading apostrophe, which
+ * both Excel and Sheets read as "literal text" rather than evaluating it. Most
+ * exported columns are server-controlled, but `actor` can be a user-supplied
+ * display name, so an admin opening the file must not run it.
+ *
+ * The apostrophe is added *before* the quoting check and therefore lands
+ * *inside* the RFC-4180 quotes when they apply. A prefix placed outside would
+ * sit ahead of a leading `"` and shift the field for a strict parser.
+ *
+ * Only the dangerous first character changes: `Nguyễn Văn A`, `a,b` and
+ * `say "hi"` are byte-identical to the pre-fix output.
  */
 export const csvCell = (value: string): string => {
-  if (/[",\r\n]/.test(value)) {
-    return `"${value.replace(/"/g, '""')}"`;
+  const safe = FORMULA_LEADING.test(value) ? `'${value}` : value;
+  if (/[",\r\n]/.test(safe)) {
+    return `"${safe.replace(/"/g, '""')}"`;
   }
-  return value;
+  return safe;
 };
 
 const csvRow = (cells: readonly string[]): string => cells.map(csvCell).join(',');
