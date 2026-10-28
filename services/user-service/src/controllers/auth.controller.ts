@@ -20,6 +20,14 @@ const FORGOT_PASSWORD_ACCEPTED = {
 export class AuthController {
   private authService: AuthService;
 
+  /**
+   * `AuthServiceError` carries the status the service decided on; anything else
+   * keeps the endpoint's existing fallback. Same mapping `resetPassword` uses.
+   */
+  private refusalStatus(error: unknown, fallback: number): number {
+    return error instanceof AuthServiceError ? error.statusCode : fallback;
+  }
+
   constructor() {
     this.authService = new AuthService();
   }
@@ -71,7 +79,7 @@ export class AuthController {
         data: result,
       });
     } catch (error) {
-      res.status(401).json({
+      res.status(this.refusalStatus(error, 401)).json({
         success: false,
         error: error instanceof Error ? error.message : 'Login failed',
       });
@@ -87,7 +95,7 @@ export class AuthController {
         data: result,
       });
     } catch (error) {
-      res.status(401).json({
+      res.status(this.refusalStatus(error, 401)).json({
         success: false,
         error: error instanceof Error ? error.message : 'Token refresh failed',
       });
