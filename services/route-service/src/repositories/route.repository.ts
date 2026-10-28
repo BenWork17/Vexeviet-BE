@@ -23,6 +23,28 @@ export interface AdminRouteRow {
   operator: { id: string; firstName: string; lastName: string; email: string };
 }
 
+/**
+ * The column set every paginated route list returns, admin and operator alike.
+ *
+ * Shared rather than duplicated so the operator list cannot drift from the
+ * admin list: `RouteService.toAdminRoute` maps exactly these fields.
+ */
+const ROUTE_PAGE_SELECT = {
+  id: true,
+  name: true,
+  origin: true,
+  destination: true,
+  departureTime: true,
+  busType: true,
+  price: true,
+  status: true,
+  busTemplateId: true,
+  operatorId: true,
+  operator: {
+    select: { id: true, firstName: true, lastName: true, email: true },
+  },
+} as const;
+
 export class RouteRepository {
   async create(data: Prisma.RouteCreateInput): Promise<Route> {
     return prisma.route.create({ data });
@@ -100,15 +122,32 @@ export class RouteRepository {
     });
   }
 
-  async findByOperatorId(operatorId: string, skip?: number, take?: number): Promise<Route[]> {
+  /**
+   * `GET /routes/my/routes`: one bounded page of the operator's own routes.
+   *
+   * Selects the same `AdminRouteRow` column set the admin list uses, so the
+   * operator row is built by the same `toAdminRoute` mapper rather than a
+   * second, drifting shape. The DELETED exclusion is inside the predicate, so
+   * `countOperatorRoutes` below cannot disagree with the page.
+   */
+  async findOperatorPage(
+    operatorId: string,
+    skip: number,
+    take: number
+  ): Promise<AdminRouteRow[]> {
     return prisma.route.findMany({
-      where: {
-        operatorId,
-        status: { not: RouteStatus.DELETED },
-      },
+      where: { operatorId, status: { not: RouteStatus.DELETED } },
+      select: ROUTE_PAGE_SELECT,
       skip,
       take,
       orderBy: { createdAt: 'desc' },
+    });
+  }
+
+  /** Count for `findOperatorPage` — same predicate, so `total` matches the page. */
+  async countOperatorRoutes(operatorId: string): Promise<number> {
+    return prisma.route.count({
+      where: { operatorId, status: { not: RouteStatus.DELETED } },
     });
   }
 
@@ -132,21 +171,7 @@ export class RouteRepository {
       orderBy,
       skip,
       take,
-      select: {
-        id: true,
-        name: true,
-        origin: true,
-        destination: true,
-        departureTime: true,
-        busType: true,
-        price: true,
-        status: true,
-        busTemplateId: true,
-        operatorId: true,
-        operator: {
-          select: { id: true, firstName: true, lastName: true, email: true },
-        },
-      },
+      select: ROUTE_PAGE_SELECT,
     });
   }
 
