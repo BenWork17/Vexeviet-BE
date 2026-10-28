@@ -71,6 +71,11 @@ export class BookingController {
   /**
    * Get booking by code
    * GET /api/v1/bookings/code/:code
+   *
+   * Forwards the actor's role as well as its id, so the service's single
+   * read-authorization predicate admits an OPERATOR on its own route. With no
+   * token (`optionalAuth`) both are `undefined` and the row is returned — this
+   * endpoint is also public tracking.
    */
   getByCode = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
     try {
@@ -78,7 +83,8 @@ export class BookingController {
       const bookingCode = Array.isArray(code) ? code[0] : code;
       const booking = await this.bookingService.getBookingByCode(
         bookingCode,
-        req.user?.userId
+        req.user?.userId,
+        req.user?.role
       );
 
       res.status(200).json({

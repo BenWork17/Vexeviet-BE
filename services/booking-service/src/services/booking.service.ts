@@ -265,11 +265,18 @@ export class BookingService {
   }
 
   /**
-   * Get booking by code
+   * Get booking by code.
+   *
+   * Uses the same read-authorization predicate as `getBookingById`, so an
+   * OPERATOR can read a booking on its own route whether it is addressed by id
+   * or by code. The guard keeps its public-tracking shape: with no actor claims
+   * (`userId === undefined`) the row is returned unchanged. The refusal is a
+   * 404, never a 403.
    */
   async getBookingByCode(
     bookingCode: string,
-    userId?: string
+    userId?: string,
+    role?: UserRole
   ): Promise<BookingDetailResponse> {
     const booking = await this.bookingRepo.findByCode(bookingCode);
 
@@ -277,8 +284,8 @@ export class BookingService {
       throw new NotFoundError('Booking', bookingCode);
     }
 
-    // Check ownership if userId provided
-    if (userId && booking.userId !== userId) {
+    // No actor claims → public tracking endpoint, return the row.
+    if (userId && !this.canReadBooking(booking, { userId, role })) {
       throw new NotFoundError('Booking', bookingCode);
     }
 

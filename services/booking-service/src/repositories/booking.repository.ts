@@ -218,7 +218,12 @@ export class BookingRepository {
   }
 
   /**
-   * Find booking by booking code
+   * Find booking by booking code.
+   *
+   * `route.operatorId` is selected for the same reason as in `findById`: an
+   * OPERATOR's read authorization compares the route's owner from the row it
+   * already loads. It is not part of the response shape — the detail formatter
+   * builds an explicit object.
    */
   async findByCode(bookingCode: string): Promise<Booking | null> {
     return prisma.booking.findUnique({
@@ -246,6 +251,7 @@ export class BookingRepository {
             duration: true,
             busType: true,
             price: true,
+            operatorId: true,
             operator: {
               select: {
                 id: true,
