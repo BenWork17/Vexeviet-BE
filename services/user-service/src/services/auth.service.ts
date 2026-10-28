@@ -199,6 +199,23 @@ export class AuthService {
    * `consume()` is the atomic GETDEL, so the token is gone before any hashing
    * work starts: a double submit cannot both succeed, and the loser gets the
    * same 400 as an unknown token.
+   *
+   * **Ordering is deliberate: revoke first, write the password second.** The two
+   * writes live behind two separate repositories, so a single `$transaction`
+   * would mean either reaching around both of them or threading a transaction
+   * client through `logoutAll` and each repository — a signature change this fix
+   * is not allowed to make. Revoking first instead makes the pair fail closed:
+   *
+   * - `logoutAll` throws → nothing was written. The caller gets a 500 and the
+   *   credential is unchanged, so a half-applied reset cannot exist.
+   * - The password update throws → sessions are already dead and the password is
+   *   still the old one. The user is signed out but their credential is intact,
+   *   which is the safe direction: an attacker holding a refresh token loses it
+   *   either way.
+   *
+   * Either failure still returns 500 *after* the token was consumed by GETDEL, so
+   * the flow is **not** retryable: the user must request a new reset link. That
+   * is the price of never leaving a changed password beside live sessions.
    */
   async resetPassword(token: string, newPassword: string): Promise<void> {
     const record = await passwordResetService.consume(token);
@@ -215,11 +232,15 @@ export class AuthService {
     }
 
     const hashedPassword = await CryptoUtils.hashPassword(newPassword);
-    await this.userRepo.update(user.id, { password: hashedPassword });
 
-    // The single most important line: every existing refresh token dies, so a
-    // session an attacker already holds cannot be refreshed past this point.
+    // First write: every existing refresh token dies, so a session an attacker
+    // already holds cannot be refreshed past this point. If this throws, the
+    // password below is never touched.
     await this.logoutAll(user.id);
+
+    // Second write: only reached once revocation succeeded, so a changed
+    // password can never coexist with the sessions it was meant to end.
+    await this.userRepo.update(user.id, { password: hashedPassword });
 
     await this.emitAudit({
       actorId: user.id,
