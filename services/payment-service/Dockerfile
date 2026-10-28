@@ -81,12 +81,12 @@ ENV NODE_ENV=production
 
 WORKDIR /app/services/payment-service
 
-# Expose port
-EXPOSE 3003
+# Expose port (canonical: src/config/index.ts -> PAYMENT_SERVICE_PORT || 3004)
+EXPOSE 3004
 
-# Health check
+# Health check - probe the port the process actually binds, not a hardcoded literal
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
-    CMD node -e "require('http').get('http://localhost:3003/health', (r) => {process.exit(r.statusCode === 200 ? 0 : 1)})"
+    CMD node -e "const p = process.env.PAYMENT_SERVICE_PORT || 3004; require('http').get('http://localhost:' + p + '/health', (r) => {process.exit(r.statusCode === 200 ? 0 : 1)}).on('error', () => process.exit(1))"
 
 # HA QUYEN: tat ca process sau day chay bang user `app`, khong phai root
 USER app
