@@ -447,16 +447,30 @@ export class PaymentService {
   /**
    * Admin summary (contract Shape 2). Window is the last `days` calendar days,
    * inclusive of today, and the daily trend is zero-filled across the whole window.
+   *
+   * An OPERATOR sees the same window restricted to the routes it operates
+   * (`booking.route.operatorId`); an ADMIN sees every row, unchanged.
    */
-  async getAdminPaymentSummary(days: number): Promise<AdminPaymentSummary> {
+  async getAdminPaymentSummary(days: number, actor: TokenPayload): Promise<AdminPaymentSummary> {
     const now = new Date();
     const from = startOfDay(addDays(now, -(days - 1)));
 
-    // Summary is ADMIN-only, so the window is never operator-scoped. Both bounds
-    // are required: without the upper bound a future-dated row would be counted in
-    // `totalCompleted`/`countByStatus` but dropped by the zero-filled trend.
+    // `operatorId` is always derived by the caller from the verified token, never
+    // from a query param, path param or body, so an OPERATOR cannot widen its
+    // window. Both date bounds are required: without the upper bound a future-dated
+    // row would be counted in `totalCompleted`/`countByStatus` but dropped by the
+    // zero-filled trend.
+    //
+    // The operator scope and any future `booking`-relation filter must be merged
+    // into this one object — a second spread of `booking` would drop the first,
+    // exactly as in `listAdminPayments`.
+    const bookingFilter: Prisma.BookingWhereInput = {
+      ...(actor.role === 'OPERATOR' ? { route: { operatorId: actor.userId } } : {}),
+    };
+
     const windowWhere: Prisma.PaymentWhereInput = {
       createdAt: { gte: from, lte: endOfDay(now) },
+      ...(Object.keys(bookingFilter).length > 0 ? { booking: bookingFilter } : {}),
     };
 
     const [grouped, completedPoints] = await Promise.all([
