@@ -1,7 +1,7 @@
 import * as crypto from 'crypto';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
-import { UserRole } from '@prisma/client';
+import { UserRole, UserStatus } from '@prisma/client';
 import { writeAuditLog } from '@vexeviet/database';
 import { RegisterRequest, LoginRequest, AuthResponse, TokenPayload } from '../types';
 import { UserRepository } from '../repositories/user.repository';
@@ -13,6 +13,28 @@ import { passwordResetService } from './password-reset.service';
 /** One message for unknown, expired and already-used tokens — they must not be
  * distinguishable. Names the field so the client knows what to re-request. */
 const RESET_TOKEN_REJECTED = 'token is invalid or has expired';
+
+/**
+ * The statuses a session may never be minted for.
+ *
+ * `PENDING_VERIFICATION` is deliberately absent. Nothing in this codebase
+ * produces it (`register()` writes `ACTIVE`, the OTP path writes `ACTIVE`), so
+ * a check for it would be dead code today while locking out any legacy row
+ * that carries it for no benefit. Adding it is a product decision, not a fix.
+ *
+ * Refusing here also cannot retroactively kill an already-issued access token:
+ * that token is valid for its remaining ≤15 minutes by design, the same
+ * accepted residual recorded in the admin-wave ledger. Enforcing status on
+ * every authenticated request is out of scope for this gate.
+ */
+const REFUSED_STATUSES: ReadonlySet<UserStatus> = new Set<UserStatus>([
+  UserStatus.SUSPENDED,
+  UserStatus.DELETED,
+]);
+
+/** A caller here already holds a valid refresh token, so naming the reason
+ * leaks nothing an enumeration attack could use. */
+const ACCOUNT_REFUSED = 'Account is suspended or deleted';
 
 /** Raised with an explicit status so a controller does not have to guess. */
 export class AuthServiceError extends Error {
@@ -101,7 +123,16 @@ export class AuthService {
     // Verify password
     const isValidPassword = await bcrypt.compare(data.password, user.password);
     if (!isValidPassword) {
-      throw new Error('Invalid credentials');
+      throw new AuthServiceError('Invalid credentials', 401);
+    }
+
+    // Status is checked only after the password matched, and reports the very
+    // same message as a bad password. A suspended account is therefore
+    // indistinguishable from an unknown email or a wrong password, so this
+    // cannot be used to confirm that a guess was correct. Nothing is minted or
+    // persisted on this path.
+    if (REFUSED_STATUSES.has(user.status)) {
+      throw new AuthServiceError('Invalid credentials', 401);
     }
 
     // Generate tokens
@@ -137,6 +168,15 @@ export class AuthService {
     } catch (error) {
       await this.refreshTokenRepo.deleteByToken(token);
       throw new Error('Invalid refresh token');
+    }
+
+    // A suspended or deleted account must not be able to mint a new pair. The
+    // stored token is revoked rather than refused alone, following the
+    // expired/invalid branches above, so it cannot be retried until it expires.
+    // `findByToken` already includes the user, so the status is loaded.
+    if (REFUSED_STATUSES.has(storedToken.user.status)) {
+      await this.refreshTokenRepo.deleteByToken(token);
+      throw new AuthServiceError(ACCOUNT_REFUSED, 401);
     }
 
     // Delete old refresh token
