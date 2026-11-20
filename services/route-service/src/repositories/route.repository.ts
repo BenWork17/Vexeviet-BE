@@ -41,7 +41,7 @@ const ROUTE_PAGE_SELECT = {
   busTemplateId: true,
   operatorId: true,
   operator: {
-    select: { id: true, firstName: true, lastName: true, email: true },
+    select: { id: true, firstName: true, lastName: true, email: true, operatorAvatarUrl: true },
   },
 } as const;
 
@@ -72,6 +72,9 @@ export class RouteRepository {
             firstName: true,
             lastName: true,
             email: true,
+            operatorAvatarUrl: true,
+            interiorImages: true,
+            exteriorImages: true,
           },
         },
       },
@@ -260,6 +263,7 @@ export class RouteRepository {
       firstName: string;
       lastName: string;
       email: string;
+      operatorAvatarUrl: string | null;
       status: UserStatus;
       createdAt: Date;
     }>
@@ -275,6 +279,7 @@ export class RouteRepository {
         firstName: true,
         lastName: true,
         email: true,
+        operatorAvatarUrl: true,
         status: true,
         createdAt: true,
       },

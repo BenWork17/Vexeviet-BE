@@ -33,16 +33,9 @@ export interface AuditActor {
   email: string;
 }
 
-/** Raised with an explicit status so the controller does not have to guess. */
-export class UserServiceError extends Error {
-  public readonly statusCode: number;
+import { UserServiceError } from '../utils/errors';
 
-  constructor(message: string, statusCode: number) {
-    super(message);
-    this.name = 'UserServiceError';
-    this.statusCode = statusCode;
-  }
-}
+export { UserServiceError };
 
 const toAdminUser = (row: AdminUserRow): AdminUser => ({
   id: row.id,
@@ -100,7 +93,22 @@ export class UserService {
     }
 
     // Remove fields that shouldn't be updated directly
-    const { password: _p, role, createdAt, updatedAt, id: _id, ...safeUpdates } = updates;
+    // Image columns are only writable through the dedicated upload endpoints.
+    const {
+      password: _p,
+      role,
+      createdAt,
+      updatedAt,
+      id: _id,
+      avatarUrl: _a,
+      operatorAvatarUrl: _oa,
+      interiorImages: _ii,
+      exteriorImages: _ei,
+      status: _st,
+      isEmailVerified: _ev,
+      isPhoneVerified: _pv,
+      ...safeUpdates
+    } = updates;
 
     const user = await this.userRepo.update(id, safeUpdates);
 

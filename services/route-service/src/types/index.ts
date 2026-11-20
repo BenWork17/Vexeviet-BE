@@ -131,6 +131,7 @@ export interface AdminOperator {
   id: string;
   name: string;
   contactEmail: string;
+  avatarUrl: string | null;
   activeRoutes: number;
   monthlyBookings: number;
   /** Always `null`: no rating data exists in the schema (documented gap). */

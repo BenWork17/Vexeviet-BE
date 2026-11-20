@@ -1,6 +1,7 @@
 import express from 'express';
 import cors from 'cors';
 import routes from './routes';
+import { getUploadDir } from './utils/image-upload';
 import { errorHandler, notFoundHandler } from './middlewares/error.middleware';
 
 const app = express();
@@ -17,6 +18,20 @@ app.get('/health', (_req, res) => {
     uptime: process.uptime(),
   });
 });
+
+// Uploaded images (avatars, operator galleries). Gateway proxies /api/v1/uploads here.
+app.use(
+  '/api/v1/uploads',
+  express.static(getUploadDir(), {
+    index: false,
+    dotfiles: 'deny',
+    maxAge: '7d',
+    setHeaders: (res) => {
+      res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
+      res.setHeader('X-Content-Type-Options', 'nosniff');
+    },
+  })
+);
 
 app.use('/api/v1', routes);
 

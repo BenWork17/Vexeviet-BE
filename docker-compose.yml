@@ -70,6 +70,7 @@ services:
     environment:
       NODE_ENV: production
       USER_SERVICE_PORT: "3001"
+      UPLOAD_DIR: /app/uploads
       DATABASE_URL: mysql://${MYSQL_USER:-vexeviet_user}:${MYSQL_PASSWORD:-securepassword}@mysql:3306/${MYSQL_DATABASE:-vexeviet}
       REDIS_HOST: redis
       REDIS_PORT: "6379"
@@ -83,6 +84,7 @@ services:
       - "3001:3001"
     volumes:
       - user_service_logs:/app/logs
+      - user_service_uploads:/app/uploads
     depends_on:
       mysql:
         condition: service_healthy
@@ -158,6 +160,7 @@ services:
       - vexeviet-network
 
 volumes:
+  user_service_uploads:
   mysql_data:
   redis_data:
   rabbitmq_data:
