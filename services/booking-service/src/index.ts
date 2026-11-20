@@ -38,6 +38,7 @@ app.listen(PORT, () => {
   console.log(`🔗 Health check: http://localhost:${PORT}/health`);
   console.log(`📦 Bookings API: http://localhost:${PORT}/api/v1/bookings`);
   console.log(`💺 Seats API: http://localhost:${PORT}/api/v1/seats`);
+  console.log(`⭐ Reviews API: http://localhost:${PORT}/api/v1/reviews`);
 
   // Start cleanup job for expired seat holds
   setInterval(async () => {

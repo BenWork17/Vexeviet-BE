@@ -2,6 +2,7 @@ import {
   Route,
   BusType,
   RouteStatus,
+  ReviewStatus,
   SeatStatus,
   Prisma,
   prisma,
@@ -26,6 +27,14 @@ type RouteWithAvailability = Route & {
   totalSeats: number;
   availableSeats: number;
   actualTotalSeats: number;
+  operator?: {
+    id: string;
+    firstName: string;
+    lastName: string;
+    email?: string;
+    rating?: number | null;
+    reviewCount?: number;
+  };
 };
 
 const MAX_LIMIT = 100;
@@ -164,10 +173,31 @@ export class RouteService {
 
     // Calculate available seats based on departure date (use route's departure time date)
     const departureDate = this.departureDateOf(route.departureTime);
-    const availableSeats = await this.calculateAvailableSeats(route.id, departureDate, actualTotalSeats);
+    const [availableSeats, reviewAgg] = await Promise.all([
+      this.calculateAvailableSeats(route.id, departureDate, actualTotalSeats),
+      prisma.operatorReview.aggregate({
+        where: {
+          operatorId: route.operatorId,
+          status: ReviewStatus.VISIBLE,
+        },
+        _avg: { rating: true },
+        _count: { id: true },
+      }),
+    ]);
+
+    const reviewCount = reviewAgg._count.id;
+    const rating =
+      reviewCount > 0 && reviewAgg._avg.rating !== null
+        ? Math.round(reviewAgg._avg.rating * 10) / 10
+        : null;
 
     return {
       ...route,
+      operator: {
+        ...route.operator,
+        rating,
+        reviewCount,
+      },
       totalSeats: actualTotalSeats,
       actualTotalSeats,
       availableSeats,

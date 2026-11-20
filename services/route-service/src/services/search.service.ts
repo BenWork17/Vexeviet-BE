@@ -1,4 +1,4 @@
-import { prisma, Route, RouteStatus, SeatStatus, Prisma } from '@vexeviet/database';
+import { prisma, Route, RouteStatus, ReviewStatus, SeatStatus, Prisma } from '@vexeviet/database';
 import { cacheService } from './cache.service';
 import { BusType, PaginatedResponse } from '../types';
 
@@ -178,6 +178,43 @@ export class SearchService {
     return { availabilityMap, actualTotalSeatsMap };
   }
 
+  /**
+   * Batch fetch operator rating averages and review counts (VISIBLE reviews only).
+   */
+  private async getOperatorRatingsMap(
+    operatorIds: string[]
+  ): Promise<Map<string, { rating: number | null; reviewCount: number }>> {
+    const ratingsMap = new Map<string, { rating: number | null; reviewCount: number }>();
+    const uniqueIds = Array.from(new Set(operatorIds.filter(Boolean)));
+
+    if (uniqueIds.length === 0) {
+      return ratingsMap;
+    }
+
+    const groups = await this.withPrismaRetry(() =>
+      prisma.operatorReview.groupBy({
+        by: ['operatorId'],
+        where: {
+          operatorId: { in: uniqueIds },
+          status: ReviewStatus.VISIBLE,
+        },
+        _avg: { rating: true },
+        _count: { id: true },
+      })
+    );
+
+    for (const group of groups) {
+      const reviewCount = group._count.id;
+      const rating =
+        reviewCount > 0 && group._avg.rating !== null
+          ? Math.round(group._avg.rating * 10) / 10
+          : null;
+      ratingsMap.set(group.operatorId, { rating, reviewCount });
+    }
+
+    return ratingsMap;
+  }
+
   async searchRoutes(params: SearchRoutesRequest): Promise<PaginatedResponse<RouteWithAvailability>> {
     const cacheKey = `search:${cacheService.generateCacheKey(params as unknown as Record<string, unknown>)}`;
 
@@ -218,18 +255,27 @@ export class SearchService {
     );
 
     // Calculate real-time available seats for all routes (using BusTemplate actual seats)
-    const { availabilityMap, actualTotalSeatsMap } = await this.calculateAvailableSeatsForRoutes(
-      routes,
-      params.departureDate
-    );
+    const [{ availabilityMap, actualTotalSeatsMap }, operatorRatingsMap] = await Promise.all([
+      this.calculateAvailableSeatsForRoutes(routes, params.departureDate),
+      this.getOperatorRatingsMap(routes.map((r) => r.operatorId)),
+    ]);
 
-    // Map routes with computed availableSeats and actualTotalSeats
+    // Map routes with computed availableSeats, actualTotalSeats, and operator rating summary
     let routesWithAvailability: RouteWithAvailability[] = routes.map(route => {
       // Lấy actualTotalSeats từ BusTemplate
       const finalTotalSeats = actualTotalSeatsMap.get(route.id) ?? 0;
+      const ratingStats = operatorRatingsMap.get(route.operatorId) ?? {
+        rating: null,
+        reviewCount: 0,
+      };
       
       return {
         ...route,
+        operator: {
+          ...route.operator,
+          rating: ratingStats.rating,
+          reviewCount: ratingStats.reviewCount,
+        },
         totalSeats: finalTotalSeats, // Hiển thị 42
         actualTotalSeats: finalTotalSeats,
         availableSeats: availabilityMap.get(route.id) ?? finalTotalSeats,
@@ -274,17 +320,38 @@ export class SearchService {
         },
         orderBy: { createdAt: 'desc' },
         take: limit,
+        include: {
+          operator: {
+            select: {
+              id: true,
+              firstName: true,
+              lastName: true,
+            },
+          },
+        },
       })
     );
 
     // Calculate real-time available seats for popular routes (using BusTemplate actual seats)
-    const { availabilityMap, actualTotalSeatsMap } = await this.calculateAvailableSeatsForRoutes(routes);
+    const [{ availabilityMap, actualTotalSeatsMap }, operatorRatingsMap] = await Promise.all([
+      this.calculateAvailableSeatsForRoutes(routes),
+      this.getOperatorRatingsMap(routes.map((r) => r.operatorId)),
+    ]);
 
     const routesWithAvailability: RouteWithAvailability[] = routes.map(route => {
       const finalTotalSeats = actualTotalSeatsMap.get(route.id) ?? 0;
+      const ratingStats = operatorRatingsMap.get(route.operatorId) ?? {
+        rating: null,
+        reviewCount: 0,
+      };
       
       return {
         ...route,
+        operator: {
+          ...route.operator,
+          rating: ratingStats.rating,
+          reviewCount: ratingStats.reviewCount,
+        },
         totalSeats: finalTotalSeats, // Hiển thị 42
         actualTotalSeats: finalTotalSeats,
         availableSeats: availabilityMap.get(route.id) ?? finalTotalSeats,

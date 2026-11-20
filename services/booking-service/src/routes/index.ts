@@ -1,6 +1,7 @@
 import { Router, IRouter } from 'express';
 import { BookingController } from '../controllers/booking.controller';
 import { SeatController } from '../controllers/seat.controller';
+import reviewRoutes from './review.routes';
 import {
   authMiddleware,
   optionalAuth,
@@ -304,5 +305,10 @@ router.post(
   validateAdminSeatUnblockBody,
   seatController.adminUnblockSeats
 );
+
+// =====================================================
+// OPERATOR REVIEW ROUTES
+// =====================================================
+router.use(reviewRoutes);
 
 export default router;

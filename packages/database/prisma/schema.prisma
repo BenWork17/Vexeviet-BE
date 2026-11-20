@@ -29,7 +29,9 @@ model User {
   operatedRoutes         Route[]
   refreshTokens          RefreshToken[]
   bookings               Booking[]
-  buses                  Bus[]          @relation("OperatorBuses")
+  buses                  Bus[]            @relation("OperatorBuses")
+  reviewsWritten         OperatorReview[] @relation("CustomerReviews")
+  reviewsReceived        OperatorReview[] @relation("OperatorReviews")
 
   @@map("users")
 }
@@ -222,6 +224,7 @@ model Route {
   // Relations
   bookings     Booking[]
   bookingSeats BookingSeat[]
+  reviews      OperatorReview[]
 
   // Audit
   createdAt DateTime @default(now())
@@ -343,6 +346,7 @@ model Booking {
   passengers BookingPassenger[]
   seats      BookingSeat[]
   payments   Payment[]
+  review     OperatorReview?
 
   @@index([bookingCode])
   @@index([userId])
@@ -530,4 +534,38 @@ model AuditLog {
   @@index([action])
   @@index([severity])
   @@map("audit_logs")
+}
+
+// =====================================================
+// OPERATOR REVIEWS
+// =====================================================
+
+enum ReviewStatus {
+  VISIBLE
+  HIDDEN
+}
+
+model OperatorReview {
+  id            String       @id @default(uuid())
+  bookingId     String       @unique
+  booking       Booking      @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  userId        String
+  user          User         @relation("CustomerReviews", fields: [userId], references: [id])
+  operatorId    String
+  operator      User         @relation("OperatorReviews", fields: [operatorId], references: [id])
+  routeId       String
+  route         Route        @relation(fields: [routeId], references: [id])
+  rating        Int
+  comment       String?      @db.Text
+  status        ReviewStatus @default(VISIBLE)
+  operatorReply String?      @db.Text
+  repliedAt     DateTime?
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+
+  @@index([operatorId, status, createdAt])
+  @@index([userId])
+  @@index([operatorId, rating])
+  @@index([routeId])
+  @@map("operator_reviews")
 }

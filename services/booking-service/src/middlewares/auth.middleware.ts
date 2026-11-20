@@ -71,6 +71,23 @@ export const operatorOrAdmin = (
   next();
 };
 
+// Middleware to check if user is customer
+export const customerOnly = (
+  req: AuthRequest,
+  _res: Response,
+  next: NextFunction
+): void => {
+  if (!req.user) {
+    return next(new UnauthorizedError('Authentication required'));
+  }
+
+  if (req.user.role !== 'CUSTOMER') {
+    return next(new ForbiddenError('Customer access required'));
+  }
+
+  next();
+};
+
 // Optional auth - doesn't fail if no token, but sets user if valid token
 export const optionalAuth = (
   req: AuthRequest,

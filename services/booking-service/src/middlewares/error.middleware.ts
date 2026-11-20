@@ -132,3 +132,37 @@ export class IdempotencyError extends Error implements AppError {
     this.name = 'IdempotencyError';
   }
 }
+
+export class BookingNotFoundError extends Error implements AppError {
+  statusCode = 404;
+  code = 'BOOKING_NOT_FOUND';
+
+  constructor(bookingId?: string) {
+    super(bookingId ? `Booking '${bookingId}' not found` : 'Booking not found');
+    this.name = 'BookingNotFoundError';
+  }
+}
+
+export class TripNotCompletedError extends Error implements AppError {
+  statusCode = 400;
+  code = 'TRIP_NOT_COMPLETED';
+
+  constructor(message: string = 'You can only review a booking after completing the trip') {
+    super(message);
+    this.name = 'TripNotCompletedError';
+  }
+}
+
+export class ReviewAlreadyExistsError extends Error implements AppError {
+  statusCode = 409;
+  code = 'REVIEW_ALREADY_EXISTS';
+
+  constructor(bookingId?: string) {
+    super(
+      bookingId
+        ? `A review already exists for booking '${bookingId}'`
+        : 'A review already exists for this booking'
+    );
+    this.name = 'ReviewAlreadyExistsError';
+  }
+}
