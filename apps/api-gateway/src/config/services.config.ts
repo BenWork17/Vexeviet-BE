@@ -57,6 +57,11 @@ export const services: ServiceConfig[] = [
     prefix: '/webhooks',
   },
   {
+    name: 'user-service-uploads',
+    url: process.env.USER_SERVICE_URL || 'http://localhost:3001',
+    prefix: '/uploads',
+  },
+  {
     name: 'user-service-audit-logs',
     url: process.env.USER_SERVICE_URL || 'http://localhost:3001',
     prefix: '/audit-logs',

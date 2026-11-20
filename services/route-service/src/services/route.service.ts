@@ -582,6 +582,7 @@ export class RouteService {
         id: operator.id,
         name: `${operator.firstName} ${operator.lastName}`.trim(),
         contactEmail: operator.email,
+        avatarUrl: operator.operatorAvatarUrl ?? null,
         activeRoutes: activeRoutes.get(operator.id) ?? 0,
         monthlyBookings: monthlyBookings.get(operator.id) ?? 0,
         // No rating data exists anywhere in the schema (Lead decision, documented gap).

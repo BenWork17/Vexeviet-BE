@@ -209,6 +209,9 @@ export class SearchService {
                 id: true,
                 firstName: true,
                 lastName: true,
+                operatorAvatarUrl: true,
+                interiorImages: true,
+                exteriorImages: true,
               },
             },
           },
@@ -274,6 +277,18 @@ export class SearchService {
         },
         orderBy: { createdAt: 'desc' },
         take: limit,
+        include: {
+          operator: {
+            select: {
+              id: true,
+              firstName: true,
+              lastName: true,
+              operatorAvatarUrl: true,
+              interiorImages: true,
+              exteriorImages: true,
+            },
+          },
+        },
       })
     );
 

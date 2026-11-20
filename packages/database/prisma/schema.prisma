@@ -23,6 +23,10 @@ model User {
   termsAcceptedAt        DateTime?
   verificationCode       String?        @db.VarChar(10)
   verificationCodeExpiry DateTime?
+  avatarUrl              String?        @db.VarChar(500) // user profile avatar
+  operatorAvatarUrl      String?        @db.VarChar(500) // operator (bus company) avatar
+  interiorImages         Json? // operator vehicle interior photos: [url1, url2, ...]
+  exteriorImages         Json? // operator vehicle exterior photos: [url1, url2, ...]
   status                 UserStatus     @default(PENDING_VERIFICATION)
   createdAt              DateTime       @default(now())
   updatedAt              DateTime       @updatedAt

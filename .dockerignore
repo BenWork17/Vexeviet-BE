@@ -8,3 +8,4 @@
 .env.*
 **/coverage
 **/.DS_Store
+uploads

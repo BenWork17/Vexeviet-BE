@@ -1,9 +1,46 @@
 import { Router, IRouter } from 'express';
 import { UserController } from '../controllers/user.controller';
-import { authMiddleware, adminOnly } from '../middlewares/auth.middleware';
+import { ImageController } from '../controllers/image.controller';
+import { authMiddleware, adminOnly, operatorOrAdmin } from '../middlewares/auth.middleware';
+import { singleImageUpload } from '../utils/image-upload';
 
 const router: IRouter = Router();
 const userController = new UserController();
+const imageController = new ImageController();
+
+// ---- Images (literal paths; declared before any `/:id`-shaped route) ----
+router.post('/profile/avatar', authMiddleware, singleImageUpload, (req, res, next) => {
+  imageController.uploadUserAvatar(req, res).catch(next);
+});
+router.delete('/profile/avatar', authMiddleware, (req, res, next) => {
+  imageController.deleteUserAvatar(req, res).catch(next);
+});
+
+router.get('/operator/images', authMiddleware, operatorOrAdmin, (req, res, next) => {
+  imageController.getOwnImages(req, res).catch(next);
+});
+router.put('/operator/avatar', authMiddleware, operatorOrAdmin, singleImageUpload, (req, res, next) => {
+  imageController.putAvatar(req, res).catch(next);
+});
+router.delete('/operator/avatar', authMiddleware, operatorOrAdmin, (req, res, next) => {
+  imageController.deleteAvatar(req, res).catch(next);
+});
+router.post(
+  '/operator/images/:type',
+  authMiddleware,
+  operatorOrAdmin,
+  singleImageUpload,
+  (req, res, next) => {
+    imageController.addGalleryImage(req, res).catch(next);
+  }
+);
+router.delete('/operator/images/:type', authMiddleware, operatorOrAdmin, (req, res, next) => {
+  imageController.deleteGalleryImage(req, res).catch(next);
+});
+// Public: shown on customer-facing pages.
+router.get('/operators/:id/images', (req, res, next) => {
+  imageController.getPublicImages(req, res).catch(next);
+});
 
 // `/profile` stays first: it must never be shadowed by a `/:id`-shaped route.
 router.get('/profile', authMiddleware, (req, res, next) => {

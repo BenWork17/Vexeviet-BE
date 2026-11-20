@@ -49,8 +49,8 @@ WORKDIR /app
 #   - tao thu muc log duoc phep ghi, chown cho user app
 RUN apk add --no-cache openssl && \
     addgroup -S app && adduser -S -G app app && \
-    mkdir -p /app/logs && \
-    chown -R app:app /app/logs
+    mkdir -p /app/logs /app/uploads && \
+    chown -R app:app /app/logs /app/uploads
 
 # Copy files, rieng cac file chinh thi chu so huu la app (app doc/ghi duoc)
 COPY --chown=app:app package.json pnpm-lock.yaml pnpm-workspace.yaml ./
