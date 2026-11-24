@@ -1,20 +1,9 @@
 import { Request, Response } from 'express';
-import { PaymentMethod, PaymentStatus } from '@prisma/client';
 import { paymentService } from '../services/payment.service';
+import { paymentAdminController } from './payment-admin.controller';
 import { AuthRequest, canAccessBooking, sendForbidden } from '../middlewares/auth.middleware';
-import {
-  AdminPaymentListQuery,
-  AdminPaymentReconciliationQuery,
-  AdminPaymentSummaryQuery,
-} from '../validators/payment.validator';
-import {
-  AdminPaymentListFilters,
-  CreatePaymentRequest,
-  RefundRequest,
-  ResyncBookingRequest,
-} from '../types';
+import { CreatePaymentRequest, RefundRequest } from '../types';
 
-/** Same UUID shape `createPaymentSchema`/`refundSchema` accept. */
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -22,11 +11,14 @@ const isUuid = (value: string | undefined): value is string =>
   typeof value === 'string' && UUID_PATTERN.test(value);
 
 export class PaymentController {
+  listAdminPayments = paymentAdminController.listAdminPayments;
+  getAdminPaymentSummary = paymentAdminController.getAdminPaymentSummary;
+  resyncPaymentBooking = paymentAdminController.resyncPaymentBooking;
+  listReconciliation = paymentAdminController.listReconciliation;
+
   createPayment = async (req: Request, res: Response): Promise<void> => {
     try {
       const user = (req as AuthRequest).user;
-
-      // `authMiddleware` runs first, so this is defensive only.
       if (!user) {
         res.status(401).json({ success: false, error: 'Unauthorized', code: 'UNAUTHORIZED' });
         return;
@@ -42,9 +34,7 @@ export class PaymentController {
         ipAddress,
       };
 
-      // The body's `bookingId` was previously trusted; enforce ownership now.
       const owner = await paymentService.getBookingOwner(data.bookingId);
-
       if (!owner) {
         res.status(404).json({
           success: false,
@@ -60,10 +50,6 @@ export class PaymentController {
       }
 
       const rawIdempotencyKey = req.headers['idempotency-key'] as string | undefined;
-
-      // Namespace the client key by the token's user. The cache key is global in
-      // Redis, so without this a caller who guessed another user's key would get
-      // back that user's cached payment response.
       const idempotencyKey = rawIdempotencyKey
         ? `${user.userId}:${rawIdempotencyKey}`
         : undefined;
@@ -93,7 +79,6 @@ export class PaymentController {
       }
 
       const { paymentId } = req.params;
-
       if (!isUuid(paymentId)) {
         res.status(400).json({
           success: false,
@@ -104,7 +89,6 @@ export class PaymentController {
       }
 
       const owner = await paymentService.getBookingOwnerByPaymentId(paymentId);
-
       if (!owner) {
         res.status(404).json({
           success: false,
@@ -120,19 +104,12 @@ export class PaymentController {
       }
 
       const payment = await paymentService.getPayment(paymentId);
-
       if (!payment) {
-        res.status(404).json({
-          success: false,
-          error: 'Payment not found',
-        });
+        res.status(404).json({ success: false, error: 'Payment not found' });
         return;
       }
 
-      res.status(200).json({
-        success: true,
-        data: payment,
-      });
+      res.status(200).json({ success: true, data: payment });
     } catch (error) {
       res.status(400).json({
         success: false,
@@ -153,20 +130,13 @@ export class PaymentController {
       const transactionRef = typeof raw === 'string' ? raw.trim() : '';
 
       if (!transactionRef) {
-        res.status(400).json({
-          success: false,
-          error: 'transactionRef is required',
-        });
+        res.status(400).json({ success: false, error: 'transactionRef is required' });
         return;
       }
 
       const owner = await paymentService.getBookingOwnerByTransactionRef(transactionRef);
-
       if (!owner) {
-        res.status(404).json({
-          success: false,
-          error: 'Payment not found',
-        });
+        res.status(404).json({ success: false, error: 'Payment not found' });
         return;
       }
 
@@ -176,19 +146,12 @@ export class PaymentController {
       }
 
       const status = await paymentService.getPaymentStatusByTransactionRef(transactionRef);
-
       if (!status) {
-        res.status(404).json({
-          success: false,
-          error: 'Payment not found',
-        });
+        res.status(404).json({ success: false, error: 'Payment not found' });
         return;
       }
 
-      res.status(200).json({
-        success: true,
-        data: status,
-      });
+      res.status(200).json({ success: true, data: status });
     } catch (error) {
       res.status(400).json({
         success: false,
@@ -206,7 +169,6 @@ export class PaymentController {
       }
 
       const { bookingId } = req.params;
-
       if (!isUuid(bookingId)) {
         res.status(400).json({
           success: false,
@@ -217,9 +179,6 @@ export class PaymentController {
       }
 
       const owner = await paymentService.getBookingOwner(bookingId);
-
-      // Unknown booking keeps its pre-existing `200 []` answer: there is nothing
-      // to leak, and this endpoint's response is unchanged for that case.
       if (!owner) {
         res.status(200).json({ success: true, data: [] });
         return;
@@ -231,11 +190,7 @@ export class PaymentController {
       }
 
       const payments = await paymentService.getPaymentsByBooking(bookingId);
-
-      res.status(200).json({
-        success: true,
-        data: payments,
-      });
+      res.status(200).json({ success: true, data: payments });
     } catch (error) {
       res.status(400).json({
         success: false,
@@ -253,7 +208,6 @@ export class PaymentController {
       }
 
       const { paymentId } = req.params;
-
       if (!isUuid(paymentId)) {
         res.status(400).json({
           success: false,
@@ -264,7 +218,6 @@ export class PaymentController {
       }
 
       const owner = await paymentService.getBookingOwnerByPaymentId(paymentId);
-
       if (!owner) {
         res.status(404).json({
           success: false,
@@ -280,7 +233,6 @@ export class PaymentController {
       }
 
       await paymentService.cancelPayment(paymentId);
-
       res.status(200).json({
         success: true,
         message: 'Payment cancelled successfully',
@@ -297,8 +249,6 @@ export class PaymentController {
   processRefund = async (req: Request, res: Response): Promise<void> => {
     try {
       const user = (req as AuthRequest).user;
-
-      // `authMiddleware` + `adminOnly` run first; the actor is required for audit.
       if (!user) {
         res.status(401).json({ success: false, error: 'Unauthorized', code: 'UNAUTHORIZED' });
         return;
@@ -310,163 +260,12 @@ export class PaymentController {
       };
 
       const result = await paymentService.processRefund(data, user);
-      res.status(200).json({
-        success: true,
-        data: result,
-      });
+      res.status(200).json({ success: true, data: result });
     } catch (error) {
       const statusCode = (error as { statusCode?: number }).statusCode || 400;
       res.status(statusCode).json({
         success: false,
         error: error instanceof Error ? error.message : 'Failed to process refund',
-        code: (error as { code?: string }).code,
-      });
-    }
-  };
-
-  /**
-   * GET /api/v1/payments/admin/all
-   *
-   * `operatorOrAdmin` has already run. An OPERATOR is scoped to its own routes'
-   * payments; the scope comes from the token, never from the query string (the
-   * validator strips unknown keys, so a supplied `operatorId` is discarded).
-   */
-  listAdminPayments = async (req: Request, res: Response): Promise<void> => {
-    try {
-      const user = (req as AuthRequest).user;
-      if (!user) {
-        res.status(401).json({ success: false, error: 'Unauthorized', code: 'UNAUTHORIZED' });
-        return;
-      }
-
-      const query = req.query as unknown as AdminPaymentListQuery;
-
-      const filters: AdminPaymentListFilters = {
-        ...(query.status ? { status: query.status as PaymentStatus } : {}),
-        ...(query.method ? { method: query.method as PaymentMethod } : {}),
-        ...(query.bookingCode ? { bookingCode: query.bookingCode } : {}),
-        ...(query.provider ? { provider: query.provider } : {}),
-        ...(query.from ? { from: query.from } : {}),
-        ...(query.to ? { to: query.to } : {}),
-        ...(user.role === 'OPERATOR' ? { operatorId: user.userId } : {}),
-      };
-
-      const result = await paymentService.listAdminPayments(filters, query.page, query.limit);
-
-      res.status(200).json({
-        success: true,
-        data: result.data,
-        pagination: result.pagination,
-      });
-    } catch (error) {
-      const statusCode = (error as { statusCode?: number }).statusCode || 400;
-      res.status(statusCode).json({
-        success: false,
-        error: error instanceof Error ? error.message : 'Failed to list payments',
-        code: (error as { code?: string }).code,
-      });
-    }
-  };
-
-  /**
-   * GET /api/v1/payments/admin/summary
-   *
-   * `operatorOrAdmin` has already run. An OPERATOR's totals cover only its own
-   * routes; the scope comes from the token, never from the query string. ADMIN
-   * receives the platform-wide summary exactly as before.
-   */
-  getAdminPaymentSummary = async (req: Request, res: Response): Promise<void> => {
-    try {
-      const user = (req as AuthRequest).user;
-      if (!user) {
-        res.status(401).json({ success: false, error: 'Unauthorized', code: 'UNAUTHORIZED' });
-        return;
-      }
-
-      const { days } = req.query as unknown as AdminPaymentSummaryQuery;
-
-      const summary = await paymentService.getAdminPaymentSummary(days, user);
-
-      res.status(200).json({
-        success: true,
-        data: summary,
-      });
-    } catch (error) {
-      const statusCode = (error as { statusCode?: number }).statusCode || 400;
-      res.status(statusCode).json({
-        success: false,
-        error: error instanceof Error ? error.message : 'Failed to build payment summary',
-        code: (error as { code?: string }).code,
-      });
-    }
-  };
-
-  /**
-   * POST /api/v1/payments/admin/:paymentId/resync — ADMIN only.
-   *
-   * Manual repair of a payment→booking sync that never landed. `adminOnly` has
-   * already run, so an OPERATOR can never re-drive another operator's booking.
-   */
-  resyncPaymentBooking = async (req: Request, res: Response): Promise<void> => {
-    try {
-      const user = (req as AuthRequest).user;
-      if (!user) {
-        res.status(401).json({ success: false, error: 'Unauthorized', code: 'UNAUTHORIZED' });
-        return;
-      }
-
-      const { paymentId } = req.params;
-
-      if (!isUuid(paymentId)) {
-        res.status(400).json({
-          success: false,
-          error: 'paymentId must be a valid uuid',
-          code: 'INVALID_ID',
-        });
-        return;
-      }
-
-      const body = req.body as ResyncBookingRequest;
-
-      const result = await paymentService.resyncBookingStatus(paymentId, body.reason, user);
-
-      res.status(200).json({
-        success: true,
-        data: result,
-      });
-    } catch (error) {
-      const statusCode = (error as { statusCode?: number }).statusCode || 400;
-      res.status(statusCode).json({
-        success: false,
-        error: error instanceof Error ? error.message : 'Failed to re-sync booking',
-        code: (error as { code?: string }).code,
-      });
-    }
-  };
-
-  /** GET /api/v1/payments/admin/reconciliation — ADMIN only, read-only. */
-  listReconciliation = async (req: Request, res: Response): Promise<void> => {
-    try {
-      const user = (req as AuthRequest).user;
-      if (!user) {
-        res.status(401).json({ success: false, error: 'Unauthorized', code: 'UNAUTHORIZED' });
-        return;
-      }
-
-      const { page, limit } = req.query as unknown as AdminPaymentReconciliationQuery;
-
-      const result = await paymentService.getReconciliation(page, limit);
-
-      res.status(200).json({
-        success: true,
-        data: result.data,
-        pagination: result.pagination,
-      });
-    } catch (error) {
-      const statusCode = (error as { statusCode?: number }).statusCode || 400;
-      res.status(statusCode).json({
-        success: false,
-        error: error instanceof Error ? error.message : 'Failed to build reconciliation report',
         code: (error as { code?: string }).code,
       });
     }

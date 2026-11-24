@@ -1,14 +1,11 @@
 @echo off
-echo ========================================
-echo  VeXeViet Backend - Development Mode
-echo ========================================
-echo.
-echo Starting Docker services...
+echo [VeXeViet BE] Starting local infrastructure (MySQL + Redis)...
 call pnpm docker:up
-echo.
-echo Waiting 5 seconds for Docker to initialize...
-timeout /t 5 /nobreak > nul
-echo.
-echo Starting all microservices...
-echo.
+if %ERRORLEVEL% NEQ 0 exit /b %ERRORLEVEL%
+
+echo [VeXeViet BE] Building shared workspace packages...
+call pnpm dev:packages
+if %ERRORLEVEL% NEQ 0 exit /b %ERRORLEVEL%
+
+echo [VeXeViet BE] Starting API Gateway (:3000) and Microservices (:3001..3004)...
 call pnpm dev:services

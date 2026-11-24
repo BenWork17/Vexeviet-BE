@@ -1,5 +1,5 @@
 import { Transaction, TransactionType, TransactionStatus, Prisma } from '@prisma/client';
-import prisma from '../config/database';
+import { prisma } from '@vexeviet/database';
 
 export class TransactionRepository {
   async create(

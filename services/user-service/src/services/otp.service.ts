@@ -1,4 +1,4 @@
-import { prisma, UserStatus } from '../config/database';
+import { prisma, UserStatus } from '@vexeviet/database';
 import { CryptoUtils } from '../utils/crypto';
 import { emailService } from '../utils/email';
 import { smsService } from '../utils/sms';

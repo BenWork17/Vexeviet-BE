@@ -1,48 +1,14 @@
-import Redis from 'ioredis';
+import type Redis from 'ioredis';
+import { createRedisClient } from '@vexeviet/common';
 
-export interface RedisConfig {
-  host: string;
-  port: number;
-  password?: string;
-  db: number;
-  keyPrefix: string;
-  maxRetriesPerRequest: number;
-}
-
-export const redisConfig: RedisConfig = {
-  host: process.env.REDIS_HOST || 'localhost',
-  port: parseInt(process.env.REDIS_PORT || '6379'),
-  password: process.env.REDIS_PASSWORD,
-  db: parseInt(process.env.REDIS_DB || '0'),
-  keyPrefix: process.env.REDIS_KEY_PREFIX || 'vexeviet:',
-  maxRetriesPerRequest: 3,
-};
-
-class RedisClient {
+class UserRedisWrapper {
   private client: Redis;
-  private static instance: RedisClient;
 
-  private constructor(config: RedisConfig) {
-    this.client = new Redis(config);
-
-    this.client.on('connect', () => {
-      console.log('✅ Redis connected successfully');
+  constructor() {
+    this.client = createRedisClient({
+      serviceName: 'user-service',
+      keyPrefix: process.env.REDIS_KEY_PREFIX || 'vexeviet:',
     });
-
-    this.client.on('error', (error: Error) => {
-      console.error('❌ Redis connection error:', error);
-    });
-
-    this.client.on('reconnecting', () => {
-      console.log('🔄 Redis reconnecting...');
-    });
-  }
-
-  public static getInstance(): RedisClient {
-    if (!RedisClient.instance) {
-      RedisClient.instance = new RedisClient(redisConfig);
-    }
-    return RedisClient.instance;
   }
 
   public getClient(): Redis {
@@ -70,15 +36,10 @@ class RedisClient {
     return result === 1;
   }
 
-  public async flushAll(): Promise<void> {
-    await this.client.flushall();
-  }
-
   public async disconnect(): Promise<void> {
     await this.client.quit();
-    console.log('Redis disconnected');
   }
 }
 
-export const redis = RedisClient.getInstance();
+export const redis = new UserRedisWrapper();
 export const redisClient = redis.getClient();

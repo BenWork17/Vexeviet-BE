@@ -1,3 +1,5 @@
+import { config } from '@vexeviet/config';
+
 export interface AppConfig {
   port: number;
   env: string;
@@ -9,14 +11,13 @@ export interface AppConfig {
 }
 
 export const appConfig: AppConfig = {
-  port: parseInt(process.env.PORT || '3001'),
-  env: process.env.NODE_ENV || 'development',
-  apiVersion: process.env.API_VERSION || 'v1',
-  jwtSecret: process.env.JWT_SECRET || 'your-secret-key',
-  jwtAccessExpiry: process.env.JWT_ACCESS_EXPIRY || '15m',
-  jwtRefreshExpiry: process.env.JWT_REFRESH_EXPIRY || '7d',
-  corsOrigins: (process.env.CORS_ORIGINS || 'http://localhost:3000').split(','),
+  port: config.ports.user,
+  env: config.nodeEnv,
+  apiVersion: 'v1',
+  jwtSecret: config.jwt.secret,
+  jwtAccessExpiry: config.jwt.accessExpiry,
+  jwtRefreshExpiry: config.jwt.refreshExpiry,
+  corsOrigins: [...config.corsOrigins],
 };
 
-export * from './database';
 export * from './redis';

@@ -8,11 +8,12 @@ coverage/
 tests/performance/k6/reports/*.json
 tests/performance/k6/reports/*.txt
 
-# Build output
+# Build output & TypeScript cache
 dist/
 build/
 .next/
 out/
+*.tsbuildinfo
 
 # Environment variables
 .env
@@ -41,11 +42,9 @@ Thumbs.db
 # Turbo
 .turbo/
 
-# Prisma
-prisma/migrations/
-
 # Docker
 docker-compose.override.yml
 
-# Uploaded images (user-service local storage)
+# Uploaded images (local storage)
 uploads/
+services/*/uploads/

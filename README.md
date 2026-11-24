@@ -1,107 +1,52 @@
-# VeXeViet Backend Monorepo
+# VeXeViet Backend (`vexeviet-be`)
 
-Monorepo backend cho hệ thống VeXeViet theo chuẩn SAFe Architecture.
+Backend Microservices Turborepo cho nền tảng đặt vé xe khách trực tuyến **VeXeViet**.
 
-## Cấu trúc
+## Cấu trúc hệ thống & Cổng dịch vụ
 
+```text
+vexeviet-be/
+├── apps/
+│   └── api-gateway/        # (:3000) API Gateway: Proxy /api/v1/*, CORS, Rate-limit, OpenAPI (/api/docs), X-Request-Id
+├── services/
+│   ├── user-service/       # (:3001) Auth, Users, Operators, BusTemplates, Media Uploads, AuditLogs
+│   ├── route-service/      # (:3002) Tìm kiếm & Quản lý chuyến xe
+│   ├── booking-service/    # (:3003) Giữ ghế, Đặt vé, Quản trị Booking, Đánh giá nhà xe
+│   └── payment-service/    # (:3004) Thanh toán VNPay, Webhooks, Đối soát & Hoàn tiền
+├── packages/
+│   ├── config/             # (@vexeviet/config) Kiểm tra biến môi trường bằng Zod & chuẩn hoá Service URLs
+│   ├── common/             # (@vexeviet/common) AppError, Unified ErrorHandler, Pino Logger + RequestId, Auth/RBAC, Zod Validator, Redis
+│   └── database/           # (@vexeviet/database) Prisma MySQL schema, migrations, singleton client, audit log helper
+├── docs/                   # { architecture/, api/, guides/, archive/ }
+├── scripts/                # Scripts vận hành & migration
+├── tests/                  # Postman integration & k6 performance tests
+├── docker-compose.yml      # Hạ tầng phát triển local (chỉ chạy MySQL 8 + Redis 7, và optional ngrok profile)
+└── docker-compose.apps.yml # Cấu hình chạy container các services
 ```
-vexeviet-BE/
-├── packages/          # Shared libraries & utilities
-│   ├── common/        # Common utilities, types, constants
-│   ├── database/      # Prisma schema & database client
-│   └── config/        # Shared configuration
-├── services/          # Business domain services
-│   ├── user-service/  # User management service
-│   └── route-service/ # Route management service
-├── apps/              # Applications & API gateways
-│   └── api-gateway/   # Main API gateway
-└── docs/              # Documentation
 
-## Công nghệ
-
-- **Build System**: Turbo (Turborepo)
-- **Package Manager**: pnpm
-- **Runtime**: Node.js >= 18
-- **Language**: TypeScript (strict mode)
-- **ORM**: Prisma
-- **Database**: MySQL 8.0
-- **Cache**: Redis 7
-
-## Bắt đầu
-
-### Cài đặt
+## Khởi chạy môi trường phát triển (Local Dev)
 
 ```bash
-# Install pnpm globally
-npm install -g pnpm
-
-# Install dependencies
 pnpm install
-```
-
-### Development
-
-```bash
-# Start Docker containers
-pnpm docker:up
-
-# Run all services in dev mode
-pnpm dev
-
-# Type checking
-pnpm type-check
-
-# Linting
-pnpm lint
-```
-
-### Database
-
-```bash
-# Generate Prisma Client
-pnpm prisma:generate
-
-# Run migrations
-pnpm prisma:migrate
-
-# Access MySQL
-docker-compose exec mysql mysql -u vexeviet_user -p
-```
-
-### Build
-
-```bash
-# Build all packages
-pnpm build
-
-# Clean build artifacts
-pnpm clean
-```
-
-## Scripts
-
-- `pnpm dev` - Start all services in development mode
-- `pnpm build` - Build all packages and services
-- `pnpm test` - Run all tests
-- `pnpm lint` - Lint all code
-- `pnpm type-check` - Type check all TypeScript code
-- `pnpm docker:up` - Start Docker containers
-- `pnpm docker:down` - Stop Docker containers
-
-## Architecture
-
-Monorepo này tuân theo các nguyên tắc SAFe:
-
-1. **Modularity**: Mỗi service/package độc lập
-2. **Shared Libraries**: Code dùng chung trong packages/
-3. **Type Safety**: TypeScript strict mode
-4. **Testing**: Unit & integration tests
-5. **CI/CD Ready**: Build pipeline với Turbo
-
-## Environment Variables
-
-Copy `.env.example` to `.env` và cập nhật các giá trị:
-
-```bash
 cp .env.example .env
+pnpm docker:up        # Khởi động MySQL (:3306) và Redis (:6379)
+pnpm prisma:generate  # Sinh Prisma Client
+pnpm build            # Build các shared packages (@vexeviet/config, common, database)
+pnpm dev:services     # Chạy đồng thời Gateway (:3000) và 4 Services (:3001..3004)
 ```
+
+## Truy vết lỗi (Debugging & Correlation)
+
+- Mọi request đi qua `api-gateway` đều được gắn header `X-Request-Id` (và trả lại cho client qua response header lẫn trường `requestId` khi lỗi).
+- Tất cả services trả về duy nhất một chuẩn lỗi JSON:
+  ```json
+  {
+    "success": false,
+    "error": {
+      "code": "VALIDATION_ERROR",
+      "message": "Thông báo lỗi chi tiết",
+      "details": []
+    },
+    "requestId": "9f82a1c0-..."
+  }
+  ```

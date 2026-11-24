@@ -3,12 +3,9 @@ import {
   OperatorReview,
   Prisma,
   ReviewStatus,
-  UserRole,
-  writeAuditLog,
 } from '@vexeviet/database';
 import {
   BookingNotFoundError,
-  NotFoundError,
   ReviewAlreadyExistsError,
   TripNotCompletedError,
 } from '../middlewares/error.middleware';
@@ -17,7 +14,6 @@ import {
   MyReviewRow,
   RatingGroupRow,
   ReviewRepository,
-  ReviewWithRelations,
 } from '../repositories/review.repository';
 import { PaginatedResponse, TokenPayload } from '../types';
 import {
@@ -35,18 +31,14 @@ import {
   ReviewEligibilityItem,
   ReviewEligibilityMap,
 } from '../types/review.types';
+import { ReviewAdminService, toPublicReviewDto } from './review-admin.service';
 
 const DEFAULT_PAGE = 1;
 const DEFAULT_LIMIT = 10;
 const MAX_LIMIT = 50;
-const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
 
 /**
  * Mask reviewer full name for public display so PII is never exposed.
- * Examples:
- * - ("Nguyễn Văn", "A") -> "Nguyễn V*** A"
- * - ("Nguyễn", "An") -> "Nguyễn A***"
- * - ("An", "") -> "A***"
  */
 export function maskReviewerName(firstName: string, lastName: string): string {
   const parts = `${firstName || ''} ${lastName || ''}`
@@ -74,9 +66,6 @@ export function maskReviewerName(firstName: string, lastName: string): string {
 
 /**
  * Compute whether a booking's trip has finished / is eligible for review.
- * Eligible when:
- * - booking.status === COMPLETED, OR
- * - booking.status === CONFIRMED AND the scheduled trip end time has already passed.
  */
 export function isTripCompletedForReview(
   booking: Pick<BookingForReviewRow, 'status' | 'departureDate' | 'route'>,
@@ -205,9 +194,11 @@ function isUniqueConstraintError(error: unknown): boolean {
 
 export class ReviewService {
   private readonly reviewRepo: ReviewRepository;
+  private readonly adminService: ReviewAdminService;
 
   constructor(reviewRepo: ReviewRepository = new ReviewRepository()) {
     this.reviewRepo = reviewRepo;
+    this.adminService = new ReviewAdminService(reviewRepo);
   }
 
   private toReviewDto(row: OperatorReview): ReviewDto {
@@ -238,40 +229,8 @@ export class ReviewService {
     };
   }
 
-  private toPublicReviewDto(row: ReviewWithRelations): PublicReviewDto {
-    return {
-      id: row.id,
-      rating: row.rating,
-      comment: row.comment,
-      reviewerName: maskReviewerName(row.user.firstName, row.user.lastName),
-      createdAt: row.createdAt.toISOString(),
-      route: row.route
-        ? {
-            fromCity: row.route.origin,
-            toCity: row.route.destination,
-          }
-        : null,
-      tripDate: row.booking.departureDate.toISOString().split('T')[0],
-      verified: true,
-      operatorReply: row.operatorReply,
-      repliedAt: row.repliedAt ? row.repliedAt.toISOString() : null,
-    };
-  }
-
-  private toManageReviewDto(row: ReviewWithRelations): ManageReviewDto {
-    const fullName = `${row.user.firstName || ''} ${row.user.lastName || ''}`.trim() || 'Khách hàng';
-    return {
-      ...this.toPublicReviewDto(row),
-      reviewerName: fullName,
-      bookingId: row.bookingId,
-      bookingCode: row.booking.bookingCode,
-      status: row.status,
-    };
-  }
-
   /**
    * Customer creates a review for a completed/past-confirmed booking they own.
-   * operatorId and routeId are derived strictly from the booking's route.
    */
   async createReview(
     userId: string,
@@ -413,7 +372,7 @@ export class ReviewService {
     });
 
     return {
-      data: rows.map((row) => this.toPublicReviewDto(row)),
+      data: rows.map((row) => toPublicReviewDto(row)),
       pagination: {
         page,
         limit,
@@ -424,113 +383,28 @@ export class ReviewService {
   }
 
   /**
-   * Resolve operator scope for management endpoints:
-   * - OPERATOR is always forced to their own token.userId.
-   * - ADMIN may filter by queryOperatorId, or view all when omitted.
-   */
-  private resolveManageOperatorId(
-    actor: TokenPayload,
-    queryOperatorId?: string
-  ): string | undefined {
-    if (actor.role === UserRole.OPERATOR) {
-      return actor.userId;
-    }
-    return queryOperatorId;
-  }
-
-  /**
-   * Operator/Admin dashboard: paginated list of reviews with filters.
+   * Delegate Operator/Admin review listing to ReviewAdminService.
    */
   async getManageReviews(
     actor: TokenPayload,
     query: ManageReviewsQuery
   ): Promise<PaginatedResponse<ManageReviewDto>> {
-    const page = query.page || DEFAULT_PAGE;
-    const limit = Math.min(query.limit || DEFAULT_LIMIT, MAX_LIMIT);
-    const skip = (page - 1) * limit;
-
-    const scopedOperatorId = this.resolveManageOperatorId(actor, query.operatorId);
-
-    const where: Prisma.OperatorReviewWhereInput = {
-      ...(scopedOperatorId ? { operatorId: scopedOperatorId } : {}),
-      ...(query.rating !== undefined ? { rating: query.rating } : {}),
-      ...(query.replied === true ? { repliedAt: { not: null } } : {}),
-      ...(query.replied === false ? { repliedAt: null } : {}),
-    };
-
-    if (query.search && query.search.length > 0) {
-      where.OR = [
-        { comment: { contains: query.search } },
-        { operatorReply: { contains: query.search } },
-        { booking: { bookingCode: { contains: query.search } } },
-        { user: { firstName: { contains: query.search } } },
-        { user: { lastName: { contains: query.search } } },
-      ];
-    }
-
-    const orderBy: Prisma.OperatorReviewOrderByWithRelationInput[] =
-      query.sort === 'oldest' ? [{ createdAt: 'asc' }] : [{ createdAt: 'desc' }];
-
-    const { rows, total } = await this.reviewRepo.findForManage({
-      where,
-      orderBy,
-      skip,
-      take: limit,
-    });
-
-    return {
-      data: rows.map((row) => this.toManageReviewDto(row)),
-      pagination: {
-        page,
-        limit,
-        total,
-        totalPages: Math.ceil(total / limit),
-      },
-    };
+    return this.adminService.getManageReviews(actor, query);
   }
 
   /**
-   * Operator/Admin dashboard: rating statistics + reply counts + last 30 days count.
+   * Delegate Operator/Admin review stats to ReviewAdminService.
    */
   async getManageStats(
     actor: TokenPayload,
     queryOperatorId?: string,
     now: Date = new Date()
   ): Promise<ManageReviewStatsDto> {
-    const scopedOperatorId = this.resolveManageOperatorId(actor, queryOperatorId);
-    const baseWhere: Prisma.OperatorReviewWhereInput = scopedOperatorId
-      ? { operatorId: scopedOperatorId }
-      : {};
-
-    const thirtyDaysAgo = new Date(now.getTime() - THIRTY_DAYS_MS);
-
-    const [groups, repliedCount, last30DaysCount] = await Promise.all([
-      this.reviewRepo.groupRatings(baseWhere),
-      this.reviewRepo.countReviews({
-        ...baseWhere,
-        repliedAt: { not: null },
-      }),
-      this.reviewRepo.countReviews({
-        ...baseWhere,
-        createdAt: { gte: thirtyDaysAgo },
-      }),
-    ]);
-
-    const summary = buildRatingSummary(scopedOperatorId ?? null, groups);
-    const unrepliedCount = Math.max(0, summary.totalReviews - repliedCount);
-
-    return {
-      ...summary,
-      repliedCount,
-      unrepliedCount,
-      last30DaysCount,
-    };
+    return this.adminService.getManageStats(actor, queryOperatorId, now);
   }
 
   /**
-   * Operator/Admin replies to a review (PUT overwrites existing reply).
-   * OPERATOR can only reply to reviews belonging to their own operatorId;
-   * foreign reviews return 404 to prevent leaking existence.
+   * Delegate Operator/Admin review reply to ReviewAdminService.
    */
   async replyToReview(
     actor: TokenPayload,
@@ -539,37 +413,6 @@ export class ReviewService {
     ipAddress?: string,
     now: Date = new Date()
   ): Promise<ManageReviewDto> {
-    const existing = await this.reviewRepo.findByIdWithRelations(reviewId);
-
-    if (!existing) {
-      throw new NotFoundError('Review', reviewId);
-    }
-
-    if (actor.role === UserRole.OPERATOR && existing.operatorId !== actor.userId) {
-      throw new NotFoundError('Review', reviewId);
-    }
-
-    const updated = await this.reviewRepo.setReply(reviewId, replyText.trim(), now);
-
-    // Best-effort audit log
-    try {
-      await writeAuditLog({
-        actorId: actor.userId,
-        actorName: actor.email || actor.userId,
-        actorRole: actor.role,
-        action: 'REVIEW_REPLIED',
-        target: `review:${reviewId}`,
-        targetId: reviewId,
-        metadata: {
-          bookingId: existing.bookingId,
-          operatorId: existing.operatorId,
-        },
-        ipAddress,
-      });
-    } catch {
-      // Never fail reply on audit write failure
-    }
-
-    return this.toManageReviewDto(updated);
+    return this.adminService.replyToReview(actor, reviewId, replyText, ipAddress, now);
   }
 }

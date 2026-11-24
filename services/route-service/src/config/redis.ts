@@ -1,49 +1,30 @@
-import Redis from 'ioredis';
+import type Redis from 'ioredis';
+import { createRedisClient } from '@vexeviet/common';
 
-const REDIS_URL = process.env.REDIS_URL || 'redis://localhost:6379';
 const RECONNECT_COOLDOWN_MS = 5000;
 
-class RedisClient {
-  private client: Redis | null = null;
+class RouteRedisClient {
+  private client: Redis;
   private isConnected = false;
   private connectPromise: Promise<void> | null = null;
   private nextReconnectAt = 0;
 
+  constructor() {
+    this.client = createRedisClient({ serviceName: 'route-service', maxRetriesPerRequest: 1 });
+    this.client.on('connect', () => {
+      this.isConnected = true;
+    });
+    this.client.on('close', () => {
+      this.isConnected = false;
+    });
+  }
+
   getClient(): Redis {
-    if (!this.client) {
-      this.client = new Redis(REDIS_URL, {
-        enableOfflineQueue: false,
-        maxRetriesPerRequest: 1,
-        retryStrategy(times: number): number {
-          const delay = Math.min(times * 50, 2000);
-          return delay;
-        },
-        lazyConnect: true,
-      });
-
-      this.client.on('connect', () => {
-        this.isConnected = true;
-        console.log('✅ Redis connected');
-      });
-
-      this.client.on('error', (err: Error) => {
-        console.error('❌ Redis error:', err.message);
-        this.isConnected = false;
-      });
-
-      this.client.on('close', () => {
-        this.isConnected = false;
-        console.log('⚠️ Redis connection closed');
-      });
-    }
-
     return this.client;
   }
 
   async connect(): Promise<void> {
-    const client = this.getClient();
-
-    if (this.isConnected || client.status === 'ready') {
+    if (this.isConnected || this.client.status === 'ready') {
       this.isConnected = true;
       return;
     }
@@ -53,15 +34,14 @@ class RedisClient {
     }
 
     if (!this.connectPromise) {
-      this.connectPromise = client
+      this.connectPromise = this.client
         .connect()
         .then(() => {
           this.isConnected = true;
         })
-        .catch((error: Error) => {
+        .catch(() => {
           this.isConnected = false;
           this.nextReconnectAt = Date.now() + RECONNECT_COOLDOWN_MS;
-          console.error('Redis connect error:', error.message);
         })
         .finally(() => {
           this.connectPromise = null;
@@ -72,17 +52,14 @@ class RedisClient {
   }
 
   async disconnect(): Promise<void> {
-    if (this.client) {
-      await this.client.quit();
-      this.client = null;
-      this.isConnected = false;
-    }
+    await this.client.quit();
+    this.isConnected = false;
   }
 
   isReady(): boolean {
-    return this.isConnected && this.client?.status === 'ready';
+    return this.isConnected && this.client.status === 'ready';
   }
 }
 
-export const redisClient = new RedisClient();
+export const redisClient = new RouteRedisClient();
 export const redis = redisClient.getClient();

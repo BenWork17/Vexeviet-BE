@@ -1,6 +1,6 @@
 import { PaymentStatus, TransactionStatus, TransactionType, Prisma } from '@prisma/client';
 import { vnpayConfig, paymentConfig } from '../config';
-import prisma from '../config/database';
+import { prisma } from '@vexeviet/database';
 import {
   VNPayPaymentParams,
   VNPayReturnParams,

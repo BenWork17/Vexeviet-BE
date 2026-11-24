@@ -1,5 +1,5 @@
 import { BookingStatus, Payment, PaymentStatus, Prisma } from '@prisma/client';
-import prisma from '../config/database';
+import { prisma } from '@vexeviet/database';
 
 /** Row shape returned by the admin list query. */
 export type AdminPaymentRow = Prisma.PaymentGetPayload<{

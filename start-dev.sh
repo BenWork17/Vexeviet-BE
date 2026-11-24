@@ -1,15 +1,11 @@
-#!/bin/bash
+#!/usr/bin/env bash
+set -euo pipefail
 
-echo "========================================"
-echo " VeXeViet Backend - Development Mode"
-echo "========================================"
-echo ""
-echo "Starting Docker services..."
+echo "[VeXeViet BE] Starting local infrastructure (MySQL + Redis)..."
 pnpm docker:up
-echo ""
-echo "Waiting 5 seconds for Docker to initialize..."
-sleep 5
-echo ""
-echo "Starting all microservices..."
-echo ""
+
+echo "[VeXeViet BE] Building shared workspace packages..."
+pnpm dev:packages
+
+echo "[VeXeViet BE] Starting API Gateway (:3000) and Microservices (:3001..3004)..."
 pnpm dev:services

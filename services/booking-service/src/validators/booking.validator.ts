@@ -1,95 +1,89 @@
 import { z } from 'zod';
-import { Request, Response, NextFunction } from 'express';
+import { validateBody, validateQuery } from '@vexeviet/common';
 
-// Passenger schema
+const dateOnlyOrIsoSchema = z
+  .string({ required_error: 'departureDate is required' })
+  .min(1, 'departureDate is required')
+  .refine((v) => !Number.isNaN(Date.parse(v)), {
+    message: 'departureDate must be a valid date string',
+  });
+
 export const passengerSchema = z.object({
-  firstName: z.string().min(1).max(50),
-  lastName: z.string().min(1).max(50),
-  seatNumber: z.string().min(2).max(10),
-  idNumber: z.string().max(20).optional(),
+  firstName: z.string().trim().min(1, 'Passenger firstName is required').max(100),
+  lastName: z.string().trim().max(100).default(''),
+  seatNumber: z.string().trim().min(1, 'seatNumber is required').max(16),
+  idNumber: z.string().max(30).optional(),
   dateOfBirth: z.string().optional(),
 });
 
-// Contact info schema
 export const contactInfoSchema = z.object({
-  email: z.string().email(),
-  phone: z.string().min(10).max(20),
+  email: z.string().trim().email('Valid contact email is required'),
+  phone: z.string().trim().min(8, 'Valid contact phone is required').max(25),
 });
 
-// Addons schema
 export const addonsSchema = z.object({
   insurance: z.boolean().optional(),
   meal: z.boolean().optional(),
   extraLuggage: z.boolean().optional(),
 });
 
-// Create booking request schema
-export const createBookingSchema = z.any();
+export const createBookingSchema = z
+  .object({
+    routeId: z.string({ required_error: 'routeId is required' }).uuid('routeId must be a valid UUID'),
+    departureDate: dateOnlyOrIsoSchema,
+    passengers: z.array(passengerSchema).min(1, 'At least one passenger is required').max(10),
+    seats: z
+      .array(z.string().trim().min(1))
+      .min(1, 'At least one seat must be selected')
+      .max(10, 'Maximum 10 seats per booking'),
+    pickupPointId: z.string().trim().min(1, 'pickupPointId is required'),
+    dropoffPointId: z.string().trim().min(1, 'dropoffPointId is required'),
+    contactInfo: contactInfoSchema,
+    addons: addonsSchema.optional(),
+    promoCode: z.string().max(50).optional(),
+    idempotencyKey: z.string().trim().min(1, 'idempotencyKey is required').max(128),
+    notes: z.string().max(500).optional(),
+  })
+  .passthrough();
 
-// Cancel booking request schema
-export const cancelBookingSchema = z.any();
+export const cancelBookingSchema = z
+  .object({
+    reason: z.string().trim().max(500).optional(),
+  })
+  .optional()
+  .default({});
 
-// Booking query schema
-export const bookingQuerySchema = z.any();
+export const bookingQuerySchema = z.object({
+  status: z.enum(['PENDING', 'CONFIRMED', 'CANCELLED', 'COMPLETED', 'EXPIRED']).optional(),
+  fromDate: z.string().optional(),
+  toDate: z.string().optional(),
+  page: z.coerce.number().int().min(1).optional(),
+  limit: z.coerce.number().int().min(1).max(100).optional(),
+  sortBy: z.enum(['createdAt', 'departureDate', 'totalPrice']).optional(),
+  sortOrder: z.enum(['asc', 'desc']).optional(),
+});
 
-// Seat availability request schema
-export const seatAvailabilitySchema = z.any();
+export const seatAvailabilitySchema = z.object({
+  routeId: z.string({ required_error: 'routeId is required' }).uuid('routeId must be a valid UUID'),
+  departureDate: dateOnlyOrIsoSchema,
+});
 
-// Check seats request schema
-export const checkSeatsSchema = z.any();
+export const checkSeatsSchema = z.object({
+  routeId: z.string({ required_error: 'routeId is required' }).uuid('routeId must be a valid UUID'),
+  departureDate: dateOnlyOrIsoSchema,
+  seats: z.array(z.string().trim().min(1)).min(1, 'seats array must not be empty'),
+});
 
-// Hold seats request schema
-export const holdSeatsSchema = z.any();
+export const holdSeatsSchema = z.object({
+  routeId: z.string({ required_error: 'routeId is required' }).uuid('routeId must be a valid UUID'),
+  departureDate: dateOnlyOrIsoSchema,
+  seats: z.array(z.string().trim().min(1)).min(1, 'seats array must not be empty').max(10),
+  ttlSeconds: z.number().int().positive().max(3600).optional(),
+});
 
-// Validate seat numbers request schema
-export const validateSeatsSchema = z.any();
+export const validateSeatsSchema = z.object({
+  routeId: z.string({ required_error: 'routeId is required' }).uuid('routeId must be a valid UUID'),
+  seats: z.array(z.string().trim().min(1)).min(1, 'seats array must not be empty'),
+});
 
-// Validation middleware factory
-export function validateBody<T>(schema: z.ZodSchema<T>) {
-  return (req: Request, res: Response, next: NextFunction) => {
-    try {
-      schema.parse(req.body);
-      next();
-    } catch (error) {
-      if (error instanceof z.ZodError) {
-        console.log('[VALIDATION ERROR]', JSON.stringify(error.errors, null, 2));
-        res.status(400).json({
-          success: false,
-          error: {
-            code: 'VALIDATION_ERROR',
-            message: 'Invalid request data',
-            details: error.errors,
-          },
-        });
-        return;
-      }
-      next(error);
-    }
-  };
-}
-
-// Validate query middleware factory
-export function validateQuery<T>(schema: z.ZodSchema<T>) {
-  return (req: Request, res: Response, next: NextFunction) => {
-    try {
-      schema.parse(req.query);
-      next();
-    } catch (error) {
-      if (error instanceof z.ZodError) {
-        res.status(400).json({
-          success: false,
-          error: {
-            code: 'VALIDATION_ERROR',
-            message: 'Invalid query parameters',
-            details: error.errors.map(e => ({
-              field: e.path.join('.'),
-              message: e.message,
-            })),
-          },
-        });
-        return;
-      }
-      next(error);
-    }
-  };
-}
+export { validateBody, validateQuery };

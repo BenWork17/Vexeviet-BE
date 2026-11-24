@@ -1,16 +1,9 @@
-import Redis from 'ioredis';
+import { createLogger, createRedisClient } from '@vexeviet/common';
 import { paymentConfig } from '../config';
 import { IdempotencyRecord, PaymentResponse } from '../types';
 
-const redis = new Redis({
-  host: paymentConfig.redis.host,
-  port: paymentConfig.redis.port,
-  lazyConnect: true,
-});
-
-redis.on('error', (err) => {
-  console.error('Redis connection error:', err);
-});
+const logger = createLogger('payment-service:idempotency');
+const redis = createRedisClient({ serviceName: 'payment-service' });
 
 const IDEMPOTENCY_PREFIX = 'idempotency:payment:';
 
@@ -20,7 +13,9 @@ export async function getIdempotencyRecord(key: string): Promise<IdempotencyReco
     if (!data) return null;
     return JSON.parse(data) as IdempotencyRecord;
   } catch (error) {
-    console.error('Error getting idempotency record:', error);
+    logger.warn('Failed to read idempotency record', {
+      error: error instanceof Error ? error.message : String(error),
+    });
     return null;
   }
 }
@@ -38,14 +33,16 @@ export async function setIdempotencyRecord(
       createdAt: new Date(),
       expiresAt: new Date(Date.now() + paymentConfig.idempotency.ttlSeconds * 1000),
     };
-    
+
     await redis.setex(
       `${IDEMPOTENCY_PREFIX}${key}`,
       paymentConfig.idempotency.ttlSeconds,
       JSON.stringify(record)
     );
   } catch (error) {
-    console.error('Error setting idempotency record:', error);
+    logger.warn('Failed to store idempotency record', {
+      error: error instanceof Error ? error.message : String(error),
+    });
   }
 }
 
@@ -53,16 +50,20 @@ export async function deleteIdempotencyRecord(key: string): Promise<void> {
   try {
     await redis.del(`${IDEMPOTENCY_PREFIX}${key}`);
   } catch (error) {
-    console.error('Error deleting idempotency record:', error);
+    logger.warn('Failed to delete idempotency record', {
+      error: error instanceof Error ? error.message : String(error),
+    });
   }
 }
 
 export async function connectRedis(): Promise<void> {
   try {
     await redis.connect();
-    console.log('✅ Redis connected for idempotency');
+    logger.info('Redis connected for payment idempotency');
   } catch (error) {
-    console.warn('⚠️ Redis connection failed, idempotency will be disabled:', error);
+    logger.warn('Redis unavailable; continuing without Redis idempotency cache', {
+      error: error instanceof Error ? error.message : String(error),
+    });
   }
 }
 

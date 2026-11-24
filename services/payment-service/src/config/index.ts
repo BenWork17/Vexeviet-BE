@@ -1,19 +1,20 @@
+import { config } from '@vexeviet/config';
 import { VNPayConfig } from '../types';
 
 export const paymentConfig = {
-  port: parseInt(process.env.PAYMENT_SERVICE_PORT || '3004', 10),
-  nodeEnv: process.env.NODE_ENV || 'development',
+  port: config.ports.payment,
+  nodeEnv: config.nodeEnv,
 
   paymentExpireMinutes: 15,
 
   bookingService: {
-    baseUrl: process.env.BOOKING_SERVICE_URL || 'http://localhost:3003/api/v1',
-    internalApiKey: process.env.BOOKING_SERVICE_INTERNAL_API_KEY || '',
+    baseUrl: config.services.bookingApiV1,
+    internalApiKey: config.services.internalApiKey,
   },
 
   redis: {
-    host: process.env.REDIS_HOST || 'localhost',
-    port: parseInt(process.env.REDIS_PORT || '6379', 10),
+    host: config.redis.host,
+    port: config.redis.port,
   },
 
   idempotency: {
@@ -26,7 +27,9 @@ export const vnpayConfig: VNPayConfig = {
   hashSecret: (process.env.VNPAY_HASH_SECRET || '').trim(),
   vnpUrl: (process.env.VNPAY_URL || 'https://sandbox.vnpayment.vn/paymentv2/vpcpay.html').trim(),
   returnUrl: (process.env.VNPAY_RETURN_URL || 'http://localhost:3000/payment/result').trim(),
-  apiUrl: (process.env.VNPAY_API_URL || 'https://sandbox.vnpayment.vn/merchant_webapi/api/transaction').trim(),
+  apiUrl: (
+    process.env.VNPAY_API_URL || 'https://sandbox.vnpayment.vn/merchant_webapi/api/transaction'
+  ).trim(),
   version: '2.1.0',
 };
 
@@ -34,8 +37,7 @@ export const getVNPayConfig = (): VNPayConfig => {
   if (!vnpayConfig.tmnCode || !vnpayConfig.hashSecret) {
     throw new Error(
       'VNPay TMN_CODE and HASH_SECRET are required. ' +
-      'Set VNPAY_TMN_CODE and VNPAY_HASH_SECRET in your .env file. ' +
-      'Get sandbox credentials from https://sandbox.vnpayment.vn/apis/vnpay-demo/'
+        'Set VNPAY_TMN_CODE and VNPAY_HASH_SECRET in your .env file.'
     );
   }
   return vnpayConfig;

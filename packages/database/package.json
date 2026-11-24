@@ -7,7 +7,7 @@
   "scripts": {
     "build": "tsc",
     "dev": "tsc --watch",
-    "clean": "rm -rf dist",
+    "clean": "node -e \"for(const p of [\"dist\"])require('fs').rmSync(p,{recursive:true,force:true})\"",
     "type-check": "tsc --noEmit",
     "lint": "eslint src --ext .ts",
     "prisma:generate": "dotenv -e ../../.env -- prisma generate",

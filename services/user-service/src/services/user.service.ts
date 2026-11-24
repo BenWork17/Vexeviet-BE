@@ -76,29 +76,29 @@ export class UserService {
     return userWithoutPassword;
   }
 
-  async updateUser(id: string, updates: any): Promise<User> {
+  async updateUser(id: string, updates: Record<string, unknown>): Promise<User> {
     if (!updates) {
       throw new Error('No updates provided');
     }
-    // Handle fullName from FE/Test
-    if (updates.fullName && typeof updates.fullName === 'string') {
-      const parts = updates.fullName.trim().split(/\s+/);
+    const payload: Record<string, unknown> = { ...updates };
+    if (typeof payload.fullName === 'string' && payload.fullName.trim()) {
+      const parts = payload.fullName.trim().split(/\s+/);
       if (parts.length >= 2) {
-        updates.firstName = parts[0];
-        updates.lastName = parts.slice(1).join(' ');
+        payload.firstName = parts[0];
+        payload.lastName = parts.slice(1).join(' ');
       } else {
-        updates.firstName = updates.fullName;
+        payload.firstName = payload.fullName.trim();
       }
-      delete updates.fullName;
+      delete payload.fullName;
     }
 
     // Remove fields that shouldn't be updated directly
     // Image columns are only writable through the dedicated upload endpoints.
     const {
       password: _p,
-      role,
-      createdAt,
-      updatedAt,
+      role: _role,
+      createdAt: _createdAt,
+      updatedAt: _updatedAt,
       id: _id,
       avatarUrl: _a,
       operatorAvatarUrl: _oa,
@@ -108,9 +108,12 @@ export class UserService {
       isEmailVerified: _ev,
       isPhoneVerified: _pv,
       ...safeUpdates
-    } = updates;
+    } = payload;
 
-    const user = await this.userRepo.update(id, safeUpdates);
+    const user = await this.userRepo.update(
+      id,
+      safeUpdates as Parameters<typeof this.userRepo.update>[1],
+    );
 
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
     const { password, ...userWithoutPassword } = user;

@@ -1,10 +1,9 @@
-/** Raised with an explicit status so the controller does not have to guess. */
-export class UserServiceError extends Error {
-  public readonly statusCode: number;
+import { AppError, NotFoundError, ValidationError, UnauthorizedError, ForbiddenError, ConflictError } from '@vexeviet/common';
 
-  constructor(message: string, statusCode: number) {
-    super(message);
-    this.name = 'UserServiceError';
-    this.statusCode = statusCode;
+export { AppError, NotFoundError, ValidationError, UnauthorizedError, ForbiddenError, ConflictError };
+
+export class UserServiceError extends AppError {
+  constructor(message: string, statusCode: number, code?: string) {
+    super(message, statusCode, code || (statusCode === 404 ? 'NOT_FOUND' : 'USER_SERVICE_ERROR'));
   }
 }

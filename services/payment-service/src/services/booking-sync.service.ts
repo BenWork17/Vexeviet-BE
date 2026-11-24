@@ -1,4 +1,5 @@
 import { BookingStatus, PaymentStatus } from '@prisma/client';
+import { internalFetch } from '@vexeviet/common';
 import { paymentConfig } from '../config';
 import { BookingSyncAction } from '../types';
 
@@ -7,27 +8,12 @@ const isTerminalFailureStatus = (status: PaymentStatus): boolean =>
   status === PaymentStatus.CANCELLED ||
   status === PaymentStatus.EXPIRED;
 
-/**
- * The booking transition a payment status is supposed to produce.
- *
- * This is the single source of truth for the payment→booking mapping: both the
- * automatic sync after a webhook and the admin retry endpoint resolve through
- * here, so the retry can never disagree with what the sync would have done.
- */
 export interface BookingSyncTarget {
   action: BookingSyncAction;
-  /** Booking status expected after a successful downstream call. */
   bookingStatus: BookingStatus;
-  /** Path suffix appended to `/bookings/:bookingId`. */
   pathSuffix: 'confirm' | 'payment-failed';
 }
 
-/**
- * `null` means "this payment status carries no booking transition". That covers
- * PENDING/PROCESSING (nothing decided yet) and REFUNDED/PARTIALLY_REFUNDED
- * (a refund does not change the booking, so re-syncing one must never cancel a
- * confirmed booking).
- */
 export const resolveBookingSyncTarget = (status: PaymentStatus): BookingSyncTarget | null => {
   if (status === PaymentStatus.COMPLETED) {
     return {
@@ -48,15 +34,6 @@ export const resolveBookingSyncTarget = (status: PaymentStatus): BookingSyncTarg
   return null;
 };
 
-/**
- * Downstream returned a non-2xx response. Carries the status code and body so a
- * caller can tell a real conflict (409 = the booking is already ahead) apart
- * from an auth/config failure (401/503) without parsing the message.
- *
- * Extends `Error` on purpose: `vnpay.service.ts` calls the sync inside a
- * `try/catch` that answers VNPay's IPN with `rspCode '99'` on any throw, so it
- * must stay throw-compatible with no edit on that side.
- */
 export class BookingSyncError extends Error {
   readonly status: number;
   readonly body: string;
@@ -69,10 +46,6 @@ export class BookingSyncError extends Error {
   }
 }
 
-/**
- * The booking service could not be reached at all (DNS/connect/timeout). Also
- * an `Error` subclass, so the VNPay IPN path keeps its existing behaviour.
- */
 export class BookingSyncUnavailableError extends Error {
   constructor(message: string) {
     super(message);
@@ -81,18 +54,6 @@ export class BookingSyncUnavailableError extends Error {
 }
 
 export class BookingSyncService {
-  private getHeaders(): HeadersInit {
-    const headers: Record<string, string> = {
-      'Content-Type': 'application/json',
-    };
-
-    if (paymentConfig.bookingService.internalApiKey) {
-      headers['x-internal-api-key'] = paymentConfig.bookingService.internalApiKey;
-    }
-
-    return headers;
-  }
-
   async syncBookingStatusAfterPayment(
     bookingId: string,
     paymentStatus: PaymentStatus,
@@ -105,16 +66,16 @@ export class BookingSyncService {
     }
 
     const endpoint = `${paymentConfig.bookingService.baseUrl}/bookings/${bookingId}/${target.pathSuffix}`;
-    // Only the failure transition carries a reason; `confirm` never has.
-    const body =
-      target.action === 'PAYMENT_FAILED' && reason ? { reason } : undefined;
+    const body = target.action === 'PAYMENT_FAILED' && reason ? { reason } : undefined;
 
-    let response: Awaited<ReturnType<typeof fetch>>;
+    let response: Response;
 
     try {
-      response = await fetch(endpoint, {
+      response = await internalFetch(endpoint, {
         method: 'POST',
-        headers: this.getHeaders(),
+        headers: paymentConfig.bookingService.internalApiKey
+          ? { 'x-internal-api-key': paymentConfig.bookingService.internalApiKey }
+          : undefined,
         body: body ? JSON.stringify(body) : undefined,
       });
     } catch (error) {

@@ -1,3 +1,5 @@
+import { config } from '@vexeviet/config';
+
 export interface ServiceConfig {
   name: string;
   url: string;
@@ -8,68 +10,67 @@ export interface ServiceConfig {
 export const services: ServiceConfig[] = [
   {
     name: 'user-service',
-    url: process.env.USER_SERVICE_URL || 'http://localhost:3001',
+    url: config.services.userOrigin,
     prefix: '/users',
     healthCheck: '/health',
   },
   {
     name: 'user-service-auth',
-    url: process.env.USER_SERVICE_URL || 'http://localhost:3001',
+    url: config.services.userOrigin,
     prefix: '/auth',
   },
   {
+    name: 'user-service-bus-templates',
+    url: config.services.userOrigin,
+    prefix: '/bus-templates',
+  },
+  {
+    name: 'user-service-uploads',
+    url: config.services.userOrigin,
+    prefix: '/uploads',
+  },
+  {
+    name: 'user-service-audit-logs',
+    url: config.services.userOrigin,
+    prefix: '/audit-logs',
+  },
+  {
     name: 'route-service',
-    url: process.env.ROUTE_SERVICE_URL || 'http://localhost:3002',
+    url: config.services.routeOrigin,
     prefix: '/routes',
     healthCheck: '/health',
   },
   {
     name: 'route-service-search',
-    url: process.env.ROUTE_SERVICE_URL || 'http://localhost:3002',
+    url: config.services.routeOrigin,
     prefix: '/search',
   },
-  // Booking Service (Iteration 1-4)
   {
     name: 'booking-service',
-    url: process.env.BOOKING_SERVICE_URL || 'http://localhost:3003',
+    url: config.services.bookingOrigin,
     prefix: '/bookings',
     healthCheck: '/health',
   },
   {
     name: 'booking-service-seats',
-    url: process.env.BOOKING_SERVICE_URL || 'http://localhost:3003',
+    url: config.services.bookingOrigin,
     prefix: '/seats',
   },
   {
     name: 'booking-service-reviews',
-    url: process.env.BOOKING_SERVICE_URL || 'http://localhost:3003',
+    url: config.services.bookingOrigin,
     prefix: '/reviews',
   },
   {
-    name: 'user-service-bus-templates',
-    url: process.env.USER_SERVICE_URL || 'http://localhost:3001',
-    prefix: '/bus-templates',
-  },
-  {
     name: 'payment-service',
-    url: process.env.PAYMENT_SERVICE_URL || 'http://localhost:3004',
+    url: config.services.paymentOrigin,
     prefix: '/payments',
     healthCheck: '/health',
   },
   {
     name: 'payment-service-webhooks',
-    url: process.env.PAYMENT_SERVICE_URL || 'http://localhost:3004',
+    url: config.services.paymentOrigin,
     prefix: '/webhooks',
-  },
-  {
-    name: 'user-service-uploads',
-    url: process.env.USER_SERVICE_URL || 'http://localhost:3001',
-    prefix: '/uploads',
-  },
-  {
-    name: 'user-service-audit-logs',
-    url: process.env.USER_SERVICE_URL || 'http://localhost:3001',
-    prefix: '/audit-logs',
   },
 ];
 

@@ -1,54 +1,23 @@
-import express from 'express';
-import cors from 'cors';
-import routes from './routes';
-import { errorHandler, notFoundHandler } from './middlewares/error.middleware';
-import { connectRedis } from './utils/idempotency';
 import { paymentConfig } from './config';
+import { createPaymentApp, logger } from './app';
+import { connectRedis } from './utils/idempotency';
 
-const app = express();
-
-app.use(cors());
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
-
-app.set('trust proxy', true);
-
-app.get('/health', (_req, res) => {
-  res.json({
-    status: 'ok',
-    service: 'payment-service',
-    timestamp: new Date().toISOString(),
-    uptime: process.uptime(),
-  });
-});
-
-app.get('/ready', (_req, res) => {
-  res.json({
-    status: 'ready',
-    service: 'payment-service',
-  });
-});
-
-app.use('/api/v1', routes);
-
-app.use(notFoundHandler);
-app.use(errorHandler);
-
+const app = createPaymentApp();
 const PORT = paymentConfig.port;
 
 const startServer = async (): Promise<void> => {
-  try {
-    await connectRedis();
-  } catch (error) {
-    console.warn('⚠️ Redis connection failed, continuing without idempotency:', error);
-  }
+  await connectRedis();
 
   app.listen(PORT, () => {
-    console.log(`🚀 Payment service running on port ${PORT}`);
-    console.log(`📝 Environment: ${paymentConfig.nodeEnv}`);
-    console.log(`🔗 Health check: http://localhost:${PORT}/health`);
-    console.log(`💳 VNPay sandbox: enabled`);
+    logger.info(`Payment service running on http://localhost:${PORT} (${paymentConfig.nodeEnv})`);
   });
 };
 
-startServer();
+startServer().catch((err: unknown) => {
+  logger.error('Failed to start payment service', {
+    error: err instanceof Error ? err.message : String(err),
+  });
+  process.exit(1);
+});
+
+export default app;

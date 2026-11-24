@@ -1,0 +1,87 @@
+# Containerized Application Services Overlay
+# Usage: docker compose -f docker-compose.yml -f docker-compose.apps.yml up -d --build
+
+services:
+  user-service:
+    build:
+      context: .
+      dockerfile: services/user-service/Dockerfile
+    image: vexeviet/user-service:latest
+    container_name: vexeviet-user-service
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      USER_SERVICE_PORT: "3001"
+      UPLOAD_DIR: /app/uploads
+      DATABASE_URL: mysql://${MYSQL_USER:-vexeviet_user}:${MYSQL_PASSWORD:-securepassword}@mysql:3306/${MYSQL_DATABASE:-vexeviet}
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+      JWT_SECRET: ${JWT_SECRET:-CHANGE_ME_MIN_32_CHARS_IN_PRODUCTION}
+      WAIT_FOR_DB: "true"
+      WAIT_FOR_REDIS: "true"
+      WAIT_FOR_DB_TIMEOUT: "120"
+      RUN_MIGRATIONS: "false"
+    ports:
+      - "3001:3001"
+    volumes:
+      - user_service_logs:/app/logs
+      - user_service_uploads:/app/uploads
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - vexeviet-network
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+
+  payment-service:
+    build:
+      context: .
+      dockerfile: services/payment-service/Dockerfile
+    image: vexeviet/payment-service:latest
+    container_name: vexeviet-payment-service
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      PAYMENT_SERVICE_PORT: "3004"
+      DATABASE_URL: mysql://${MYSQL_USER:-vexeviet_user}:${MYSQL_PASSWORD:-securepassword}@mysql:3306/${MYSQL_DATABASE:-vexeviet}
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+      JWT_SECRET: ${JWT_SECRET:-CHANGE_ME_MIN_32_CHARS_IN_PRODUCTION}
+      BOOKING_SERVICE_URL: ${BOOKING_SERVICE_URL:-http://host.docker.internal:3003}
+      BOOKING_SERVICE_INTERNAL_API_KEY: ${BOOKING_SERVICE_INTERNAL_API_KEY:-vexeviet-local-dev-internal-key-2026}
+      VNPAY_TMN_CODE: ${VNPAY_TMN_CODE:-}
+      VNPAY_HASH_SECRET: ${VNPAY_HASH_SECRET:-}
+      VNPAY_URL: ${VNPAY_URL:-https://sandbox.vnpayment.vn/paymentv2/vpcpay.html}
+      VNPAY_RETURN_URL: ${VNPAY_RETURN_URL:-http://localhost:3000/payment/result}
+      VNPAY_API_URL: ${VNPAY_API_URL:-https://sandbox.vnpayment.vn/merchant_webapi/api/transaction}
+      WAIT_FOR_DB: "true"
+      WAIT_FOR_REDIS: "true"
+      WAIT_FOR_DB_TIMEOUT: "120"
+      RUN_MIGRATIONS: "false"
+    ports:
+      - "3004:3004"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - payment_service_logs:/app/logs
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - vexeviet-network
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+
+volumes:
+  user_service_uploads:
+  user_service_logs:
+  payment_service_logs:

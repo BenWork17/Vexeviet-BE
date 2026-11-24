@@ -2,6 +2,7 @@ import * as crypto from 'crypto';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import { UserRole, UserStatus } from '@prisma/client';
+import { config } from '@vexeviet/config';
 import { writeAuditLog } from '@vexeviet/database';
 import { RegisterRequest, LoginRequest, AuthResponse, TokenPayload } from '../types';
 import { UserRepository } from '../repositories/user.repository';
@@ -48,7 +49,7 @@ export class AuthServiceError extends Error {
 }
 
 export class AuthService {
-  private readonly JWT_SECRET = process.env.JWT_SECRET || 'dev-secret-key';
+  private readonly JWT_SECRET = config.jwt.secret;
   private readonly JWT_EXPIRES_IN = '15m';
   private readonly REFRESH_TOKEN_EXPIRES_IN_DAYS = 7;
 
