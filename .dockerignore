@@ -1,11 +1,13 @@
 # Khong gui node_modules/len Docker daemon (giam context size, tranh xung dot)
 **/node_modules
+**/dist
 .git
 **/.turbo
 **/*.log
 # Khong bao gio dua secrets vao build context
 .env
 .env.*
+!.env.example
 **/coverage
 **/.DS_Store
-uploads
+**/uploads

@@ -78,6 +78,7 @@ RUN sed -i 's/\r$//' /usr/local/bin/docker-entrypoint.sh && \
     chmod 555 /usr/local/bin/docker-entrypoint.sh
 
 ENV NODE_ENV=production
+ENV UPLOAD_DIR=/app/uploads
 
 WORKDIR /app/services/user-service
 

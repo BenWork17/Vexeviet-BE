@@ -39,6 +39,7 @@ export const bookingDetailInclude = {
       arrivalTime: true,
       duration: true,
       busType: true,
+      licensePlate: true,
       price: true,
       operatorId: true,
       operator: {
@@ -46,6 +47,7 @@ export const bookingDetailInclude = {
           id: true,
           firstName: true,
           lastName: true,
+          operatorAvatarUrl: true,
         },
       },
     },
@@ -127,7 +129,18 @@ export class BookingRepository {
             destination: true,
             departureTime: true,
             arrivalTime: true,
+            duration: true,
             busType: true,
+            licensePlate: true,
+            operatorId: true,
+            operator: {
+              select: {
+                id: true,
+                firstName: true,
+                lastName: true,
+                operatorAvatarUrl: true,
+              },
+            },
           },
         },
         passengers: {
@@ -189,7 +202,18 @@ export class BookingRepository {
             destination: true,
             departureTime: true,
             arrivalTime: true,
+            duration: true,
             busType: true,
+            licensePlate: true,
+            operatorId: true,
+            operator: {
+              select: {
+                id: true,
+                firstName: true,
+                lastName: true,
+                operatorAvatarUrl: true,
+              },
+            },
           },
         },
         passengers: {

@@ -493,6 +493,15 @@ async function main(): Promise<void> {
   });
   console.log(`   ✅ Admin (from env): ${admin.email}`);
 
+  const sampleInteriorImages = [
+    'https://images.unsplash.com/photo-1544620347-c4fd4a3d5957?auto=format&fit=crop&w=1200&q=80',
+    'https://images.unsplash.com/photo-1570125909232-eb263c188f7e?auto=format&fit=crop&w=1200&q=80',
+  ];
+  const sampleExteriorImages = [
+    'https://images.unsplash.com/photo-1544620347-c4fd4a3d5957?auto=format&fit=crop&w=1200&q=80',
+    'https://images.unsplash.com/photo-1464219789935-c2d9d9aba644?auto=format&fit=crop&w=1200&q=80',
+  ];
+
   const operator1 = await prisma.user.upsert({
     where: { email: 'thanhbuoi@vexeviet.com' },
     update: { password: defaultPasswordHash },
@@ -505,6 +514,9 @@ async function main(): Promise<void> {
       role: UserRole.OPERATOR,
       status: UserStatus.ACTIVE,
       isEmailVerified: true,
+      operatorAvatarUrl: 'https://placehold.co/256x256/fff7ed/c2410c?text=TB',
+      interiorImages: sampleInteriorImages,
+      exteriorImages: sampleExteriorImages,
     },
   });
   console.log(`   ✅ Operator 1: ${operator1.email}`);
@@ -521,6 +533,9 @@ async function main(): Promise<void> {
       role: UserRole.OPERATOR,
       status: UserStatus.ACTIVE,
       isEmailVerified: true,
+      operatorAvatarUrl: 'https://placehold.co/256x256/fff7ed/ea580c?text=PT',
+      interiorImages: sampleInteriorImages,
+      exteriorImages: sampleExteriorImages,
     },
   });
   console.log(`   ✅ Operator 2: ${operator2.email}`);

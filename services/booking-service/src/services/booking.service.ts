@@ -73,6 +73,7 @@ export class BookingService {
             id: true,
             firstName: true,
             lastName: true,
+            operatorAvatarUrl: true,
           },
         },
       },

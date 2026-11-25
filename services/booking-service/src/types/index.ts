@@ -73,7 +73,16 @@ export interface RouteSnapshot {
   arrivalTime: string;
   duration: number;
   busType: string;
+  licensePlate?: string | null;
+  operatorId?: string;
   operatorName: string;
+  operator?: {
+    id: string;
+    name: string;
+    firstName: string;
+    lastName: string;
+    operatorAvatarUrl: string | null;
+  };
 }
 
 // Create booking response

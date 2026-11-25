@@ -1,0 +1,51 @@
+# Render Blueprint for VeXeViet Backend (Free Tier - Unified Single-Process Container)
+# Deploy: Render Dashboard -> New -> Blueprint -> Select vexeviet-be repository
+
+services:
+  - type: web
+    name: vexeviet-api
+    runtime: docker
+    plan: free
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: TRUST_PROXY_HOPS
+        value: "1"
+      - key: RUN_MIGRATIONS
+        value: "true"
+      - key: SEED_IF_EMPTY
+        value: "true"
+      - key: WAIT_FOR_DB
+        value: "true"
+      - key: WAIT_FOR_REDIS
+        value: "false"
+      - key: JWT_SECRET
+        generateValue: true
+      - key: BOOKING_SERVICE_INTERNAL_API_KEY
+        generateValue: true
+      - key: DATABASE_URL
+        sync: false
+      - key: REDIS_URL
+        sync: false
+      - key: CLOUDINARY_CLOUD_NAME
+        sync: false
+      - key: CLOUDINARY_API_KEY
+        sync: false
+      - key: CLOUDINARY_API_SECRET
+        sync: false
+      - key: CLOUDINARY_FOLDER
+        value: vexeviet
+      - key: CORS_ORIGINS
+        sync: false
+      - key: WEB_URL
+        sync: false
+      - key: FRONTEND_PAYMENT_RESULT_URL
+        sync: false
+      - key: VNPAY_TMN_CODE
+        sync: false
+      - key: VNPAY_HASH_SECRET
+        sync: false
+      - key: VNPAY_RETURN_URL
+        sync: false

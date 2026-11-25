@@ -111,6 +111,27 @@ if [ "${RUN_MIGRATIONS:-false}" = "true" ]; then
 fi
 
 # =============================================================================
+# 3b. AUTO-SEED 5K DATASET ON FIRST BOOT (neu SEED_IF_EMPTY=true va DB rong)
+# =============================================================================
+if [ "${SEED_IF_EMPTY:-false}" = "true" ] && [ -f "/app/packages/database/dist/seed-scale-5k.js" ]; then
+  _user_count=$(node -e "
+    const { PrismaClient } = require('@prisma/client');
+    const p = new PrismaClient();
+    p.user.count()
+      .then((c) => { console.log(c); return p.\$disconnect(); })
+      .catch(() => { console.log(-1); process.exit(0); });
+  " 2>/dev/null | tail -n 1)
+
+  if [ "${_user_count:-0}" -ge 0 ] && [ "${_user_count:-0}" -lt 10 ]; then
+    log "Database dang trong (users=${_user_count}). Bat dau nap bo du lieu 5.000 users..."
+    node /app/packages/database/dist/seed-scale-5k.js
+    log "Nap du lieu 5.000 users hoan tat."
+  else
+    log "Bo qua auto-seed (users=${_user_count})."
+  fi
+fi
+
+# =============================================================================
 # 4. EXEC - chuyen quyen PID 1 sang loi chinh (CMD hoac lenh custom)
 # =============================================================================
 log "Chay lenh: $*"

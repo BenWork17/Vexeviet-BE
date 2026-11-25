@@ -10,10 +10,7 @@ export function createRedisClient(options: SharedRedisOptions = {}): Redis {
   const { serviceName = 'redis', ...redisOpts } = options;
   const logger = createLogger(serviceName);
 
-  const client = new Redis({
-    host: config.redis.host,
-    port: config.redis.port,
-    password: config.redis.password || undefined,
+  const baseOpts: RedisOptions = {
     lazyConnect: true,
     enableOfflineQueue: false,
     maxRetriesPerRequest: 2,
@@ -22,7 +19,20 @@ export function createRedisClient(options: SharedRedisOptions = {}): Redis {
       return Math.min(times * 200, 2000);
     },
     ...redisOpts,
-  });
+  };
+
+  const explicitUrl = process.env.REDIS_URL?.trim();
+  const client = explicitUrl
+    ? new Redis(explicitUrl, {
+        ...(explicitUrl.startsWith('rediss://') ? { tls: {} } : {}),
+        ...baseOpts,
+      })
+    : new Redis({
+        host: config.redis.host,
+        port: config.redis.port,
+        password: config.redis.password || undefined,
+        ...baseOpts,
+      });
 
   client.on('error', (err) => {
     logger.warn(`Redis client warning: ${err.message}`);

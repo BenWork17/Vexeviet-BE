@@ -58,6 +58,10 @@ export function calculateBookingPrice(
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export function formatBookingResponse(booking: any): CreateBookingResponse {
+  const operatorName = booking.route?.operator
+    ? `${booking.route.operator.firstName} ${booking.route.operator.lastName}`.trim()
+    : '';
+
   return {
     bookingId: booking.id,
     bookingCode: booking.bookingCode,
@@ -73,9 +77,18 @@ export function formatBookingResponse(booking: any): CreateBookingResponse {
       arrivalTime: booking.route?.arrivalTime?.toISOString() || '',
       duration: booking.route?.duration || 0,
       busType: booking.route?.busType || 'STANDARD',
-      operatorName: booking.route?.operator
-        ? `${booking.route.operator.firstName} ${booking.route.operator.lastName}`
-        : '',
+      licensePlate: booking.route?.licensePlate ?? null,
+      operatorId: booking.route?.operatorId || booking.route?.operator?.id,
+      operatorName,
+      operator: booking.route?.operator
+        ? {
+            id: booking.route.operator.id,
+            name: operatorName,
+            firstName: booking.route.operator.firstName,
+            lastName: booking.route.operator.lastName,
+            operatorAvatarUrl: booking.route.operator.operatorAvatarUrl ?? null,
+          }
+        : undefined,
     },
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     passengers: booking.passengers?.map((p: any) => ({
@@ -106,11 +119,22 @@ export function formatBookingResponse(booking: any): CreateBookingResponse {
 export function formatCreateBookingResponse(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   booking: any,
-  route: Route & { operator: { id: string; firstName: string; lastName: string } },
+  route: Route & {
+    operator: {
+      id: string;
+      firstName: string;
+      lastName: string;
+      operatorAvatarUrl?: string | null;
+    };
+  },
   request: CreateBookingRequest,
   priceBreakdown: PriceBreakdown,
   selectedSeats?: string[]
 ): CreateBookingResponse {
+  const operatorName = route.operator
+    ? `${route.operator.firstName} ${route.operator.lastName}`.trim()
+    : 'Unknown Operator';
+
   return {
     bookingId: booking.id,
     bookingCode: booking.bookingCode,
@@ -126,9 +150,18 @@ export function formatCreateBookingResponse(
       arrivalTime: route.arrivalTime.toISOString(),
       duration: route.duration,
       busType: route.busType,
-      operatorName: route.operator
-        ? `${route.operator.firstName} ${route.operator.lastName}`
-        : 'Unknown Operator',
+      licensePlate: route.licensePlate ?? null,
+      operatorId: route.operatorId,
+      operatorName,
+      operator: route.operator
+        ? {
+            id: route.operator.id,
+            name: operatorName,
+            firstName: route.operator.firstName,
+            lastName: route.operator.lastName,
+            operatorAvatarUrl: route.operator.operatorAvatarUrl ?? null,
+          }
+        : undefined,
     },
     passengers: request.passengers,
     seats: selectedSeats || request.seats,
