@@ -50,3 +50,9 @@ pnpm dev:services     # Chạy đồng thời Gateway (:3000) và 4 Services (:3
     "requestId": "9f82a1c0-..."
   }
   ```
+
+## Tài liệu hướng dẫn
+
+- [Lưu trữ hình ảnh Cloudinary, sinh dữ liệu 5.000 người dùng và deploy Cloud](docs/guides/CLOUD-MEDIA-SEEDING-DEPLOYMENT.md)
+- [Khởi tạo dữ liệu mẫu cơ bản](docs/guides/DATABASE-SEEDING.md)
+- [Triển khai trên Kubernetes](docs/architecture/K8S-DEPLOYMENT.md)
