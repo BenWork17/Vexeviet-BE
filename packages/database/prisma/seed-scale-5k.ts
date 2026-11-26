@@ -819,7 +819,7 @@ async function main(): Promise<void> {
     const slug = `${stripAccents(given)}.${stripAccents(family)}${i}`;
     const email = `${slug}@${pick(EMAIL_DOMAINS)}`;
     const prefix = PHONE_PREFIXES[i % PHONE_PREFIXES.length]!;
-    const phone = `${prefix}${String(1000000 + i).slice(-7)}`;
+    const phone = `${prefix}${String(2000000 + i).slice(-7)}`;
     const createdDaysAgo = Math.floor(Math.pow(rng(), 1.35) * 160);
     const createdAt = new Date(now.getTime() - createdDaysAgo * 86400_000 - randInt(0, 86000) * 1000);
 
