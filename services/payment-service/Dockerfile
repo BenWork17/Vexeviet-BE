@@ -29,7 +29,8 @@ RUN pnpm install --frozen-lockfile
 # RUN (3) - MUC DICH: sinh Prisma Client (bien dich schema -> @prisma/client)
 #       - Can cho CA typecheck (enum...) va runtime.
 #       - Chay bang CLI cua @vexeviet/database (devDep, da cai o buoc 2).
-RUN pnpm --filter @vexeviet/database exec prisma generate
+RUN pnpm --filter @vexeviet/database exec prisma generate && \
+    pnpm --filter @vexeviet/config --filter @vexeviet/common --filter @vexeviet/database build
 
 # RUN (4) - MUC DICH: build/sinh product (tsc -> dist/)
 WORKDIR /app/services/payment-service
@@ -54,7 +55,7 @@ RUN apk add --no-cache openssl && \
 
 # Copy files, rieng cac file chinh thi chu so huu la app (app doc/ghi duoc)
 COPY --chown=app:app package.json pnpm-lock.yaml pnpm-workspace.yaml ./
-COPY --chown=app:app packages ./packages
+COPY --from=builder --chown=app:app /app/packages ./packages
 COPY --from=builder --chown=app:app /app/services/payment-service/dist ./services/payment-service/dist
 COPY --from=builder --chown=app:app /app/services/payment-service/package.json ./services/payment-service/
 

@@ -131,6 +131,10 @@ jobs:
 
       - uses: docker/setup-buildx-action@v3
 
+      - name: Normalize lowercase repository name for GHCR
+        id: repo
+        run: echo "name=$(echo '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_OUTPUT"
+
       - name: Login to GHCR
         uses: docker/login-action@v3
         with:
@@ -145,8 +149,8 @@ jobs:
           file: services/user-service/Dockerfile
           push: true
           tags: |
-            ghcr.io/${{ github.repository }}/user-service:${{ github.sha }}
-            ghcr.io/${{ github.repository }}/user-service:latest
+            ghcr.io/${{ steps.repo.outputs.name }}/user-service:${{ github.sha }}
+            ghcr.io/${{ steps.repo.outputs.name }}/user-service:latest
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
@@ -157,7 +161,7 @@ jobs:
           file: services/payment-service/Dockerfile
           push: true
           tags: |
-            ghcr.io/${{ github.repository }}/payment-service:${{ github.sha }}
-            ghcr.io/${{ github.repository }}/payment-service:latest
+            ghcr.io/${{ steps.repo.outputs.name }}/payment-service:${{ github.sha }}
+            ghcr.io/${{ steps.repo.outputs.name }}/payment-service:latest
           cache-from: type=gha
           cache-to: type=gha,mode=max
