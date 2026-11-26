@@ -306,8 +306,8 @@ export class RouteRepository {
   }
 
   /**
-   * Bookings created since `since`, grouped by route, then folded onto the
-   * route's operator. Two queries total, independent of operator count.
+   * Bookings created since `since`, grouped directly by `routes.operatorId` in
+   * ONE indexed SQL JOIN instead of grouping across thousands of `routeId`s.
    */
   async countBookingsByOperatorSince(
     operatorIds: string[],
@@ -318,31 +318,17 @@ export class RouteRepository {
       return result;
     }
 
-    const bookingCounts = await prisma.booking.groupBy({
-      by: ['routeId'],
-      where: {
-        createdAt: { gte: since },
-        route: { operatorId: { in: operatorIds } },
-      },
-      _count: { id: true },
-    });
+    const rows = await prisma.$queryRaw<Array<{ operatorId: string; cnt: bigint | number }>>`
+      SELECT r.operatorId AS operatorId, COUNT(b.id) AS cnt
+      FROM bookings b
+      INNER JOIN routes r ON r.id = b.routeId
+      WHERE b.createdAt >= ${since}
+        AND r.operatorId IN (${Prisma.join(operatorIds)})
+      GROUP BY r.operatorId
+    `;
 
-    if (bookingCounts.length === 0) {
-      return result;
-    }
-
-    const routes = await prisma.route.findMany({
-      where: { id: { in: bookingCounts.map((row) => row.routeId) } },
-      select: { id: true, operatorId: true },
-    });
-    const routeToOperator = new Map(routes.map((route) => [route.id, route.operatorId]));
-
-    for (const row of bookingCounts) {
-      const operatorId = routeToOperator.get(row.routeId);
-      if (!operatorId) {
-        continue;
-      }
-      result.set(operatorId, (result.get(operatorId) ?? 0) + row._count.id);
+    for (const row of rows) {
+      result.set(row.operatorId, Number(row.cnt));
     }
 
     return result;

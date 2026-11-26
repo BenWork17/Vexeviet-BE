@@ -23,8 +23,11 @@ type RouteWithAvailability = Route & {
 };
 
 const CACHE_TTL = 60; // Reduced to 1 minute for more accurate seat availability
+const TEMPLATE_SEAT_CACHE_TTL_MS = 5 * 60 * 1000;
 
 export class SearchService {
+  private templateSeatCache = new Map<string, { count: number; expiresAt: number }>();
+
   private isTransientPrismaConnectionError(error: unknown): boolean {
     if (!(error instanceof Error)) {
       return false;
@@ -47,14 +50,14 @@ export class SearchService {
 
       const message = error instanceof Error ? error.message : String(error);
       console.warn('Transient Prisma connection error, retrying once:', message);
-      await prisma.$disconnect();
       return operation();
     }
   }
 
   /**
-   * Get actual total seats from BusTemplate for routes
-   * This counts only seats with isAvailable=true in the Seat table
+   * Get actual total seats from BusTemplate for routes.
+   * Master seat definitions rarely change, so counts per template are cached in
+   * memory for 5 minutes to avoid an extra DB round-trip on every search.
    */
   private async getActualTotalSeatsForRoutes(
     routes: Array<{ id: string; busTemplateId: string | null }>
@@ -65,36 +68,55 @@ export class SearchService {
       return totalSeatsMap;
     }
 
-    // Get unique busTemplateIds
-    const busTemplateIds = routes
-      .map(r => r.busTemplateId)
-      .filter((id): id is string => id !== null);
+    const uniqueTemplateIds = Array.from(
+      new Set(routes.map((r) => r.busTemplateId).filter((id): id is string => id !== null))
+    );
 
-    if (busTemplateIds.length === 0) {
+    if (uniqueTemplateIds.length === 0) {
       return totalSeatsMap;
     }
 
-    // Count actual available seats per template
-    const templateSeatCounts = await this.withPrismaRetry(() =>
-      prisma.seat.groupBy({
-        by: ['busTemplateId'],
-        where: {
-          busTemplateId: { in: busTemplateIds },
-          isAvailable: true,
-        },
-        _count: {
-          id: true,
-        },
-      })
-    );
-
-    // Create map: busTemplateId -> actualSeatCount
+    const now = Date.now();
     const templateCountMap = new Map<string, number>();
-    for (const template of templateSeatCounts) {
-      templateCountMap.set(template.busTemplateId, template._count.id);
+    const missingIds: string[] = [];
+
+    for (const templateId of uniqueTemplateIds) {
+      const cached = this.templateSeatCache.get(templateId);
+      if (cached && cached.expiresAt > now) {
+        templateCountMap.set(templateId, cached.count);
+      } else {
+        missingIds.push(templateId);
+      }
     }
 
-    // Map routes to their actual seat counts
+    if (missingIds.length > 0) {
+      const templateSeatCounts = await this.withPrismaRetry(() =>
+        prisma.seat.groupBy({
+          by: ['busTemplateId'],
+          where: {
+            busTemplateId: { in: missingIds },
+            isAvailable: true,
+          },
+          _count: {
+            id: true,
+          },
+        })
+      );
+
+      for (const id of missingIds) {
+        templateCountMap.set(id, 0);
+      }
+      for (const template of templateSeatCounts) {
+        templateCountMap.set(template.busTemplateId, template._count.id);
+      }
+      for (const id of missingIds) {
+        this.templateSeatCache.set(id, {
+          count: templateCountMap.get(id) ?? 0,
+          expiresAt: now + TEMPLATE_SEAT_CACHE_TTL_MS,
+        });
+      }
+    }
+
     for (const route of routes) {
       if (route.busTemplateId) {
         const actualSeats = templateCountMap.get(route.busTemplateId) || 0;
@@ -120,54 +142,58 @@ export class SearchService {
       return { availabilityMap, actualTotalSeatsMap };
     }
 
-    // Get actual total seats from BusTemplate
-    const totalSeatsFromTemplate = await this.getActualTotalSeatsForRoutes(routes);
-
-    // If no specific departure date, use each route's departure time
-    const routeData = routes.map(r => ({
-      routeId: r.id,
-      departureDate: departureDate
+    const targetDates = routes.map((r) =>
+      departureDate
         ? new Date(departureDate)
-        : new Date(r.departureTime.toISOString().split('T')[0]),
-      // Use actual seats from template
+        : new Date(r.departureTime.toISOString().split('T')[0])
+    );
+
+    const uniqueDateKeys = Array.from(
+      new Set(targetDates.map((d) => d.toISOString().split('T')[0]))
+    );
+    const uniqueDates = uniqueDateKeys.map((key) => new Date(key));
+
+    // Run template seat lookup and occupied-seat groupBy concurrently
+    const [totalSeatsFromTemplate, occupiedSeats] = await Promise.all([
+      this.getActualTotalSeatsForRoutes(routes),
+      this.withPrismaRetry(() =>
+        prisma.bookingSeat.groupBy({
+          by: ['routeId', 'departureDate'],
+          where: {
+            routeId: { in: routes.map((r) => r.id) },
+            departureDate: { in: uniqueDates },
+            OR: [
+              { status: SeatStatus.BOOKED },
+              {
+                status: SeatStatus.HELD,
+                lockedUntil: { gt: new Date() },
+              },
+            ],
+          },
+          _count: {
+            id: true,
+          },
+        })
+      ),
+    ]);
+
+    const routeData = routes.map((r, index) => ({
+      routeId: r.id,
+      departureDate: targetDates[index]!,
       totalSeats: totalSeatsFromTemplate.get(r.id) || 0,
     }));
 
-    // Store actual total seats
     for (const route of routeData) {
       actualTotalSeatsMap.set(route.routeId, route.totalSeats);
     }
 
-    // Batch query: Get all occupied seats for these routes
-    const occupiedSeats = await this.withPrismaRetry(() =>
-      prisma.bookingSeat.groupBy({
-        by: ['routeId', 'departureDate'],
-        where: {
-          routeId: { in: routes.map(r => r.id) },
-          OR: [
-            { status: SeatStatus.BOOKED },
-            {
-              status: SeatStatus.HELD,
-              lockedUntil: { gt: new Date() },
-            },
-          ],
-        },
-        _count: {
-          id: true,
-        },
-      })
-    );
-
-    // Create a lookup map for occupied seats
     const occupiedMap = new Map<string, number>();
     for (const seat of occupiedSeats) {
-      // Key format: routeId_departureDate (date only, no time)
       const dateKey = seat.departureDate.toISOString().split('T')[0];
       const key = `${seat.routeId}_${dateKey}`;
       occupiedMap.set(key, seat._count.id);
     }
 
-    // Calculate available seats for each route
     for (const route of routeData) {
       const dateKey = route.departureDate.toISOString().split('T')[0];
       const key = `${route.routeId}_${dateKey}`;
@@ -302,7 +328,7 @@ export class SearchService {
       },
     };
 
-    await cacheService.set(cacheKey, result, CACHE_TTL);
+    void cacheService.set(cacheKey, result, CACHE_TTL);
 
     return result;
   }
@@ -364,7 +390,7 @@ export class SearchService {
       };
     });
 
-    await cacheService.set(cacheKey, routesWithAvailability, CACHE_TTL);
+    void cacheService.set(cacheKey, routesWithAvailability, CACHE_TTL);
 
     return routesWithAvailability;
   }
@@ -395,7 +421,7 @@ export class SearchService {
 
     const suggestions = routes.map((r) => field === 'origin' ? r.origin : r.destination);
 
-    await cacheService.set(cacheKey, suggestions, 600);
+    void cacheService.set(cacheKey, suggestions, 600);
 
     return suggestions;
   }

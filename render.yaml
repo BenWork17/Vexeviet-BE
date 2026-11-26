@@ -5,6 +5,7 @@ services:
   - type: web
     name: vexeviet-api
     runtime: docker
+    region: singapore
     plan: free
     dockerfilePath: ./Dockerfile
     healthCheckPath: /health

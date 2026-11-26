@@ -8,5 +8,6 @@ export * from './middlewares/correlation.middleware';
 export * from './middlewares/error.middleware';
 export * from './middlewares/auth.middleware';
 export * from './middlewares/validate.middleware';
+export * from './middlewares/compression.middleware';
 export * from './http/internal-client';
 export * from './redis';

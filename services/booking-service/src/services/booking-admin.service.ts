@@ -30,10 +30,17 @@ import {
 } from './booking-formatters';
 
 const logger = createLogger('booking-service:admin');
+const DASHBOARD_CACHE_TTL_MS = 30_000;
+
+interface DashboardCacheEntry {
+  expiresAt: number;
+  data: AdminDashboardStats;
+}
 
 export class BookingAdminService {
   private bookingRepo: BookingRepository;
   private seatRepo: SeatRepository;
+  private dashboardCache = new Map<string, DashboardCacheEntry>();
 
   constructor(
     bookingRepo = new BookingRepository(),
@@ -41,6 +48,10 @@ export class BookingAdminService {
   ) {
     this.bookingRepo = bookingRepo;
     this.seatRepo = seatRepo;
+  }
+
+  private invalidateDashboardCache(): void {
+    this.dashboardCache.clear();
   }
 
   async getAdminBookings(
@@ -54,16 +65,13 @@ export class BookingAdminService {
     const where = this.buildAdminWhere(actor, query);
 
     if (query.paymentStatus) {
-      const ids = await this.bookingRepo.findIdsByLatestPaymentStatus(query.paymentStatus);
-
-      if (ids.length === 0) {
-        return {
-          data: [],
-          pagination: { page, limit, total: 0, totalPages: 0 },
-        };
+      const supersededIds = await this.bookingRepo.findSupersededBookingIdsForPaymentStatus(
+        query.paymentStatus
+      );
+      where.payments = { some: { status: query.paymentStatus } };
+      if (supersededIds.length > 0) {
+        where.id = { notIn: supersededIds };
       }
-
-      where.id = { in: ids };
     }
 
     const orderBy: Prisma.BookingOrderByWithRelationInput = this.buildAdminOrderBy(query.sort);
@@ -85,8 +93,14 @@ export class BookingAdminService {
   }
 
   async getAdminDashboard(days: number, actor: TokenPayload): Promise<AdminDashboardStats> {
-    const { from, to, dayStarts } = this.buildWindow(days);
     const operatorId = actor.role === 'OPERATOR' ? actor.userId : undefined;
+    const cacheKey = `${actor.role}:${operatorId ?? 'all'}:${days}`;
+    const cached = this.dashboardCache.get(cacheKey);
+    if (cached && cached.expiresAt > Date.now()) {
+      return cached.data;
+    }
+
+    const { from, to, dayStarts } = this.buildWindow(days);
 
     const [
       todayBookings,
@@ -121,7 +135,7 @@ export class BookingAdminService {
       value: group.count,
     }));
 
-    return {
+    const stats: AdminDashboardStats = {
       todayBookings,
       revenueCompleted: Math.round(Number(revenueCompleted)),
       paymentsNeedingAction,
@@ -130,6 +144,13 @@ export class BookingAdminService {
       revenueTrend,
       bookingStatusSummary,
     };
+
+    this.dashboardCache.set(cacheKey, {
+      expiresAt: Date.now() + DASHBOARD_CACHE_TTL_MS,
+      data: stats,
+    });
+
+    return stats;
   }
 
   async cancelBookingAsAdmin(
@@ -164,6 +185,7 @@ export class BookingAdminService {
     }
 
     await this.seatRepo.releaseSeatsByBookingId(bookingId);
+    this.invalidateDashboardCache();
 
     const auditActor = await this.resolveAuditActor(actor);
 
@@ -235,6 +257,7 @@ export class BookingAdminService {
       );
 
       if (cancelledIds.length > 0) {
+        this.invalidateDashboardCache();
         const auditActor = await this.resolveAuditActor(actor);
 
         for (const id of cancelledIds) {
@@ -348,6 +371,7 @@ export class BookingAdminService {
         await this.bookingRepo.confirmManyAsAdmin(confirmable);
 
       if (confirmedIds.length > 0) {
+        this.invalidateDashboardCache();
         const auditActor = await this.resolveAuditActor(actor);
 
         for (const id of confirmedIds) {

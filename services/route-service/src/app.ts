@@ -3,6 +3,7 @@ import cors from 'cors';
 import {
   createCorrelationMiddleware,
   createHttpLogger,
+  createJsonCompressionMiddleware,
   createLogger,
 } from '@vexeviet/common';
 import routes from './routes';
@@ -14,6 +15,7 @@ export function createRouteApp(): Application {
   const app: Application = express();
 
   app.use(cors());
+  app.use(createJsonCompressionMiddleware());
   app.use(createCorrelationMiddleware('route-service'));
   app.use(createHttpLogger('route-service'));
   app.use(express.json());

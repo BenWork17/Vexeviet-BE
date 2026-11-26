@@ -37,6 +37,8 @@ model User {
   reviewsWritten         OperatorReview[] @relation("CustomerReviews")
   reviewsReceived        OperatorReview[] @relation("OperatorReviews")
 
+  @@index([role, status, createdAt])
+  @@index([createdAt])
   @@map("users")
 }
 
@@ -237,7 +239,10 @@ model Route {
   @@index([origin, destination])
   @@index([departureTime])
   @@index([status])
+  @@index([status, departureTime])
+  @@index([status, createdAt])
   @@index([operatorId])
+  @@index([operatorId, status, createdAt])
   @@index([busTemplateId])
   @@map("routes")
 }
@@ -355,6 +360,9 @@ model Booking {
   @@index([bookingCode])
   @@index([userId])
   @@index([status, createdAt])
+  @@index([createdAt])
+  @@index([departureDate])
+  @@index([status, paymentDeadline])
   @@index([routeId, departureDate])
   @@index([idempotencyKey])
   @@map("bookings")
@@ -421,7 +429,9 @@ model BookingSeat {
 
   @@unique([routeId, departureDate, seatNumber])
   @@index([routeId, departureDate, seatNumber])
+  @@index([routeId, status, departureDate])
   @@index([status])
+  @@index([status, lockedUntil])
   @@index([bookingId])
   @@index([holdId])
   @@index([seatId])
@@ -469,7 +479,9 @@ model Payment {
   transactions Transaction[]
 
   @@index([bookingId])
+  @@index([bookingId, createdAt])
   @@index([status])
+  @@index([status, createdAt])
   @@index([transactionRef])
   @@index([createdAt])
   @@map("payments")

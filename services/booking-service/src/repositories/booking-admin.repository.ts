@@ -90,13 +90,143 @@ export class BookingAdminRepository {
     skip: number;
     take: number;
   }): Promise<AdminBookingRow[]> {
-    return prisma.booking.findMany({
+    const bookings = await prisma.booking.findMany({
       where: params.where,
       orderBy: params.orderBy,
       skip: params.skip,
       take: params.take,
-      include: adminBookingInclude,
     });
+
+    if (bookings.length === 0) {
+      return [];
+    }
+
+    const bookingIds = bookings.map((b) => b.id);
+    const userIds = Array.from(new Set(bookings.map((b) => b.userId)));
+    const routeIds = Array.from(new Set(bookings.map((b) => b.routeId)));
+
+    const [users, routeRows, seatRows, passengerRows, latestPaymentRows] = await Promise.all([
+      prisma.user.findMany({
+        where: { id: { in: userIds } },
+        select: {
+          id: true,
+          email: true,
+          firstName: true,
+          lastName: true,
+          phone: true,
+        },
+      }),
+      prisma.$queryRaw<
+        Array<{
+          id: string;
+          name: string;
+          origin: string;
+          destination: string;
+          operatorId: string;
+          opId: string;
+          opFirstName: string;
+          opLastName: string;
+        }>
+      >`
+        SELECT r.id, r.name, r.origin, r.destination, r.operatorId,
+               u.id AS opId, u.firstName AS opFirstName, u.lastName AS opLastName
+        FROM routes r
+        INNER JOIN users u ON u.id = r.operatorId
+        WHERE r.id IN (${Prisma.join(routeIds)})
+      `,
+      prisma.bookingSeat.findMany({
+        where: { bookingId: { in: bookingIds } },
+        select: { bookingId: true, seatNumber: true },
+      }),
+      prisma.bookingPassenger.findMany({
+        where: { bookingId: { in: bookingIds } },
+        select: { bookingId: true, seatNumber: true },
+      }),
+      prisma.$queryRaw<
+        Array<{
+          bookingId: string;
+          status: PaymentStatus;
+          createdAt: Date;
+        }>
+      >`
+        SELECT latest.bookingId, latest.status, latest.createdAt
+        FROM (
+          SELECT bookingId, status, createdAt,
+                 ROW_NUMBER() OVER (PARTITION BY bookingId ORDER BY createdAt DESC, id DESC) AS rn
+          FROM payments
+          WHERE bookingId IN (${Prisma.join(bookingIds)})
+        ) latest
+        WHERE latest.rn = 1
+      `,
+    ]);
+
+    const userMap = new Map(users.map((u) => [u.id, u]));
+    const routeMap = new Map(
+      routeRows.map((r) => [
+        r.id,
+        {
+          id: r.id,
+          name: r.name,
+          origin: r.origin,
+          destination: r.destination,
+          operatorId: r.operatorId,
+          operator: {
+            id: r.opId,
+            firstName: r.opFirstName,
+            lastName: r.opLastName,
+          },
+        },
+      ])
+    );
+
+    const seatsByBooking = new Map<string, Array<{ seatNumber: string }>>();
+    for (const row of seatRows) {
+      if (!row.bookingId) continue;
+      let list = seatsByBooking.get(row.bookingId);
+      if (!list) {
+        list = [];
+        seatsByBooking.set(row.bookingId, list);
+      }
+      list.push({ seatNumber: row.seatNumber });
+    }
+
+    const passengersByBooking = new Map<string, Array<{ seatNumber: string }>>();
+    for (const row of passengerRows) {
+      let list = passengersByBooking.get(row.bookingId);
+      if (!list) {
+        list = [];
+        passengersByBooking.set(row.bookingId, list);
+      }
+      list.push({ seatNumber: row.seatNumber });
+    }
+
+    const paymentByBooking = new Map<string, Array<{ status: PaymentStatus; createdAt: Date }>>();
+    for (const row of latestPaymentRows) {
+      paymentByBooking.set(row.bookingId, [
+        {
+          status: row.status,
+          createdAt: row.createdAt instanceof Date ? row.createdAt : new Date(row.createdAt),
+        },
+      ]);
+    }
+
+    return bookings
+      .map((booking): AdminBookingRow | null => {
+        const user = userMap.get(booking.userId);
+        const route = routeMap.get(booking.routeId);
+        if (!user || !route) {
+          return null;
+        }
+        return {
+          ...booking,
+          user,
+          route,
+          seats: seatsByBooking.get(booking.id) ?? [],
+          passengers: passengersByBooking.get(booking.id) ?? [],
+          payments: paymentByBooking.get(booking.id) ?? [],
+        };
+      })
+      .filter((row): row is AdminBookingRow => row !== null);
   }
 
   async countAdmin(where: Prisma.BookingWhereInput): Promise<number> {
@@ -105,6 +235,34 @@ export class BookingAdminRepository {
 
   async findIdsByLatestPaymentStatus(status: PaymentStatus): Promise<string[]> {
     return this.queryIdsByLatestPaymentStatus(status, null);
+  }
+
+  /**
+   * Returns ONLY bookings that had at least one payment of `status` in the past
+   * whose *latest* payment is now a different status. Combined with
+   * `where.payments = { some: { status } }` and `where.id = { notIn: ... }`,
+   * this produces the exact latest-payment filter without shipping thousands of
+   * matching booking UUIDs over the wire.
+   */
+  async findSupersededBookingIdsForPaymentStatus(status: PaymentStatus): Promise<string[]> {
+    const rows = await prisma.$queryRaw<{ bookingId: string }[]>`
+      SELECT latest.bookingId
+      FROM (
+        SELECT bookingId, status,
+               ROW_NUMBER() OVER (PARTITION BY bookingId ORDER BY createdAt DESC, id DESC) AS rn
+        FROM payments
+      ) latest
+      WHERE latest.rn = 1
+        AND latest.status <> ${status}
+        AND EXISTS (
+          SELECT 1
+          FROM payments p2
+          WHERE p2.bookingId = latest.bookingId
+            AND p2.status = ${status}
+        )
+    `;
+
+    return rows.map((row) => row.bookingId);
   }
 
   async findIdsWithLatestPaymentStatusAmong(

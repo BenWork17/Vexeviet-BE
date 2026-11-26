@@ -3,6 +3,7 @@ import cors from 'cors';
 import {
   createCorrelationMiddleware,
   createHttpLogger,
+  createJsonCompressionMiddleware,
   createLogger,
 } from '@vexeviet/common';
 import { config } from './config';
@@ -15,6 +16,7 @@ export function createBookingApp(): Application {
   const app: Application = express();
 
   app.use(cors());
+  app.use(createJsonCompressionMiddleware());
   app.use(createCorrelationMiddleware('booking-service'));
   app.use(createHttpLogger('booking-service'));
   app.use(express.json());

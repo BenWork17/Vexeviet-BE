@@ -255,6 +255,7 @@ export class BookingRepository {
   findAdminPage = this.adminRepo.findAdminPage.bind(this.adminRepo);
   countAdmin = this.adminRepo.countAdmin.bind(this.adminRepo);
   findIdsByLatestPaymentStatus = this.adminRepo.findIdsByLatestPaymentStatus.bind(this.adminRepo);
+  findSupersededBookingIdsForPaymentStatus = this.adminRepo.findSupersededBookingIdsForPaymentStatus.bind(this.adminRepo);
   findIdsWithLatestPaymentStatusAmong = this.adminRepo.findIdsWithLatestPaymentStatusAmong.bind(this.adminRepo);
   countCreatedSince = this.adminRepo.countCreatedSince.bind(this.adminRepo);
   countByStatusSince = this.adminRepo.countByStatusSince.bind(this.adminRepo);
