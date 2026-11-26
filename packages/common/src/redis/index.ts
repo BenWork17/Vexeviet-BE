@@ -21,12 +21,14 @@ export function createRedisClient(options: SharedRedisOptions = {}): Redis {
     ...redisOpts,
   };
 
-  const explicitUrl = process.env.REDIS_URL?.trim();
+  const rawUrl = process.env.REDIS_URL?.trim();
+  const explicitUrl =
+    rawUrl && rawUrl.startsWith('redis://') && rawUrl.includes('.upstash.io')
+      ? `rediss://${rawUrl.slice('redis://'.length)}`
+      : rawUrl;
+
   const client = explicitUrl
-    ? new Redis(explicitUrl, {
-        ...(explicitUrl.startsWith('rediss://') ? { tls: {} } : {}),
-        ...baseOpts,
-      })
+    ? new Redis(explicitUrl, baseOpts)
     : new Redis({
         host: config.redis.host,
         port: config.redis.port,
