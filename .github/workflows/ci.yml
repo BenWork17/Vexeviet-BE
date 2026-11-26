@@ -73,10 +73,9 @@ jobs:
       - name: Hadolint - lint Dockerfiles
         uses: hadolint/hadolint-action@v3.1.0
         with:
-          dockerfile: |
-            Dockerfile
-            services/user-service/Dockerfile
-            services/payment-service/Dockerfile
+          dockerfile: Dockerfile
+          recursive: "true"
+          failure-threshold: error
           ignore: DL3008,DL3016,DL3018,DL3059
 
       - uses: docker/setup-buildx-action@v3
