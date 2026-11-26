@@ -30,6 +30,22 @@ require('../services/booking-service/dist/index.js');
 require('../services/payment-service/dist/index.js');
 require('../apps/api-gateway/dist/index.js');
 
+// Pre-warm Prisma TLS socket to Cloud DB immediately on startup so the first
+// user login/query does not pay cold connection handshake latency.
+setImmediate(() => {
+  try {
+    const { prisma } = require('../packages/database/dist/index.js');
+    if (prisma && typeof prisma.$queryRawUnsafe === 'function') {
+      prisma
+        .$queryRawUnsafe('SELECT 1')
+        .then(() => console.log('[unified] Database TLS connection pool pre-warmed.'))
+        .catch(() => {});
+    }
+  } catch {
+    // Ignore pre-warm errors
+  }
+});
+
 const shutdown = async (signal) => {
   console.log(`[unified] Received ${signal}, shutting down gracefully...`);
   try {

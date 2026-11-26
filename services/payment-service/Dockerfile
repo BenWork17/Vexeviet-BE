@@ -6,7 +6,7 @@
 # ---------------------------------------------------------------------------
 # Build stage (stage 1): chi dung de build, khong dua vao production image
 # ---------------------------------------------------------------------------
-FROM node:18-alpine AS builder
+FROM node:20-alpine AS builder
 
 WORKDIR /app
 
@@ -38,7 +38,7 @@ RUN pnpm build
 # ---------------------------------------------------------------------------
 # Production stage (stage 2): chi chua nhung gi can thiet de chay
 # ---------------------------------------------------------------------------
-FROM node:18-alpine
+FROM node:20-alpine
 
 WORKDIR /app
 

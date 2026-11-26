@@ -1,0 +1,25 @@
+name: Keep Render Backend Warm
+
+on:
+  schedule:
+    # Ping moi 12 phut de giu container Render Free khong ngu dong sau 15 phut
+    - cron: "*/12 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  ping:
+    name: Ping Render /health
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Wake & verify VeXeViet API Gateway
+        env:
+          HEALTH_URL: https://vexeviet-api-8752.onrender.com/health
+        run: |
+          echo "Pinging ${HEALTH_URL}..."
+          curl -fsS --retry 2 --retry-delay 5 --max-time 45 "${HEALTH_URL}"
+          echo ""
+          echo "Keep-alive ping succeeded."

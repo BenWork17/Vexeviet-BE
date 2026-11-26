@@ -58,15 +58,15 @@ const prismaClientSingleton = (): PrismaClient => {
     log: process.env.DEBUG_SQL === 'true' ? ['query', 'error', 'warn'] : ['error', 'warn'],
   });
 
-  client.$use(async (params, next) => {
+  client.$use(async (params, next): Promise<unknown> => {
     try {
-      return await next(params);
+      return (await next(params)) as unknown;
     } catch (error) {
       if (params.runInTransaction || !isTransientDbError(error)) {
         throw error;
       }
       await sleep(80);
-      return next(params);
+      return (await next(params)) as unknown;
     }
   });
 

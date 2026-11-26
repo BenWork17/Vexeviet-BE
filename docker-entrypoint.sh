@@ -1,15 +1,6 @@
 #!/bin/sh
 # =============================================================================
-# docker-entrypoint.sh - Script khởi động container
-# =============================================================================
-# Vai tro: la LUONG CHAY DAU TIEN truoc khi khoi dong application (CMD).
-#   1. Kiem tra/mo phong benefits (DB, Redis) den khi san sang (vi tri chaos:
-#      container len truoc service khac -> app crash khi connect qua som)
-#   2. (Tuy chon) chay database migration
-#   3. exec CMD -> chuyen quyen PID 1 sang loi chinh (node), nhan signal dung
-#
-# Chay voi quyen khong-phai-root (USER app trong Dockerfile).
-# Syntax: POSIX sh (Alpine/busybox ash) - khong dung bash.
+# docker-entrypoint.sh - Fast Cloud & Local Container Entrypoint
 # =============================================================================
 set -eu
 
@@ -17,11 +8,6 @@ log() {
   echo "[entrypoint] $*"
 }
 
-# ---------------------------------------------------------------------------
-# Cho den khi TCP host:port san sang. Dung node co san trong image
-# (khong can cai them curl/nc - giam image size & attack surface).
-#   $1 = host, $2 = port, $3 = ten dich, $4 = so lan thu toi da (mac dinh 30)
-# ---------------------------------------------------------------------------
 wait_for_tcp() {
   _host="$1"
   _port="$2"
@@ -48,17 +34,13 @@ wait_for_tcp() {
   return 1
 }
 
-# ---------------------------------------------------------------------------
-# Trich xuat host/port tu DATABASE_URL (mysql://user:pass@host:port/db)
-# Uu tien DB_HOST/DB_PORT neu duoc set truc tiep.
-# ---------------------------------------------------------------------------
 parse_database_url() {
   DB_HOST="${DB_HOST:-}"
   DB_PORT="${DB_PORT:-3306}"
 
   if [ -z "$DB_HOST" ] && [ -n "${DATABASE_URL:-}" ]; then
     _authority=$(echo "$DATABASE_URL" | sed -e 's|^[a-zA-Z0-9+.-]*://||' -e 's|/.*$||')
-    _hostport=$(echo "$_authority" | sed -e 's|^.*@||') # bo userInfo (user:pass@)
+    _hostport=$(echo "$_authority" | sed -e 's|^.*@||')
     DB_HOST=$(echo "$_hostport" | cut -d: -f1)
     case "$_hostport" in
       *:*) DB_PORT=$(echo "$_hostport" | cut -d: -f2) ;;
@@ -67,32 +49,79 @@ parse_database_url() {
   fi
 }
 
-# =============================================================================
-# 1. CHAO HOI (khong in ra secrets)
-# =============================================================================
 log "Khoi dong | NODE_ENV=${NODE_ENV:-production} | user=$(id -un) | uid=$(id -u)"
 
-# =============================================================================
-# 2. CHO HANH PHUC (infrastructure readiness)
-# =============================================================================
+# -----------------------------------------------------------------------------
+# 1. Infrastructure TCP check (bo qua voi Managed Cloud TLS nhu TiDB Serverless
+#    de tiet kiem thoi gian cold-start tren Render Free)
+# -----------------------------------------------------------------------------
 parse_database_url
 
-if [ "${WAIT_FOR_DB:-true}" = "true" ] && [ -n "${DB_HOST:-}" ]; then
-  wait_for_tcp "$DB_HOST" "$DB_PORT" "Database (MySQL)" "${WAIT_FOR_DB_TIMEOUT:-30}"
-else
-  log "Bo qua cho Database (WAIT_FOR_DB=false hoac chua co DATABASE_URL)."
-fi
+case "${DATABASE_URL:-}" in
+  *tidbcloud.com*|*sslaccept=*)
+    log "Phat hien Cloud TLS Database (${DB_HOST:-cloud}) - bo qua buoc cho TCP thu cong."
+    ;;
+  *)
+    if [ "${WAIT_FOR_DB:-true}" = "true" ] && [ -n "${DB_HOST:-}" ]; then
+      wait_for_tcp "$DB_HOST" "$DB_PORT" "Database (MySQL)" "${WAIT_FOR_DB_TIMEOUT:-30}"
+    fi
+    ;;
+esac
 
-if [ "${WAIT_FOR_REDIS:-true}" = "true" ] && [ -n "${REDIS_HOST:-}" ]; then
+if [ "${WAIT_FOR_REDIS:-false}" = "true" ] && [ -n "${REDIS_HOST:-}" ]; then
   wait_for_tcp "$REDIS_HOST" "${REDIS_PORT:-6379}" "Redis" "${WAIT_FOR_REDIS_TIMEOUT:-30}"
-else
-  log "Bo qua cho Redis (chua set REDIS_HOST)."
 fi
 
-# =============================================================================
-# 3. DATABASE MIGRATION (tuy chon - chi chay khi duoc bat va co Prisma CLI)
-# =============================================================================
-if [ "${RUN_MIGRATIONS:-false}" = "true" ]; then
+# -----------------------------------------------------------------------------
+# 2. Fast single-pass DB state probe (kiem tra migration + user count trong 1 lan
+#    ket noi thay vi goi Prisma CLI cham chap moi lan container thuc day)
+# -----------------------------------------------------------------------------
+_need_migrate="false"
+_need_seed="false"
+
+if [ "${RUN_MIGRATIONS:-false}" = "true" ] || [ "${SEED_IF_EMPTY:-false}" = "true" ]; then
+  _probe=$(node -e "
+    const fs = require('fs');
+    const path = require('path');
+    const { PrismaClient } = require('@prisma/client');
+    const migDir = '/app/packages/database/prisma/migrations';
+    const localMigs = fs.existsSync(migDir)
+      ? fs.readdirSync(migDir, { withFileTypes: true }).filter((d) => d.isDirectory()).length
+      : 0;
+    const p = new PrismaClient();
+    (async () => {
+      try {
+        const migRows = await p.\$queryRawUnsafe('SELECT COUNT(*) AS c FROM _prisma_migrations WHERE finished_at IS NOT NULL');
+        const appliedMigs = Number(migRows?.[0]?.c ?? 0);
+        const users = await p.user.count();
+        console.log((appliedMigs < localMigs ? 'MIGRATE_YES' : 'MIGRATE_NO') + ':' + users);
+      } catch {
+        console.log('MIGRATE_YES:-1');
+      } finally {
+        await p.\$disconnect().catch(() => {});
+      }
+    })();
+  " 2>/dev/null | tail -n 1 || echo "MIGRATE_YES:-1")
+
+  _mig_flag=$(echo "$_probe" | cut -d: -f1)
+  _user_count=$(echo "$_probe" | cut -d: -f2)
+
+  if [ "${RUN_MIGRATIONS:-false}" = "true" ] && [ "$_mig_flag" = "MIGRATE_YES" ]; then
+    _need_migrate="true"
+  elif [ "${RUN_MIGRATIONS:-false}" = "true" ]; then
+    log "Tat ca Prisma migrations da duoc ap dung san - bo qua Prisma CLI de khoi dong nhanh."
+  fi
+
+  if [ "${SEED_IF_EMPTY:-false}" = "true" ]; then
+    if [ "$_mig_flag" = "MIGRATE_YES" ] || { [ "${_user_count:-0}" -ge 0 ] && [ "${_user_count:-0}" -lt 10 ]; }; then
+      _need_seed="true"
+    else
+      log "Bo qua auto-seed (users=${_user_count})."
+    fi
+  fi
+fi
+
+if [ "$_need_migrate" = "true" ]; then
   _prisma_bin=""
   if [ -x "/app/node_modules/.bin/prisma" ]; then
     _prisma_bin="/app/node_modules/.bin/prisma"
@@ -104,17 +133,11 @@ if [ "${RUN_MIGRATIONS:-false}" = "true" ]; then
     log "Chay database migration (prisma migrate deploy)..."
     (cd /app/packages/database && "$_prisma_bin" migrate deploy)
     log "Migration hoan tat."
-  else
-    log "WARN: RUN_MIGRATIONS=true nhung khong tim thay Prisma CLI (la devDependency,"
-    log "      khong cai trong production image). Bo qua - dung cach khac (job/CI) de migrate."
   fi
 fi
 
-# =============================================================================
-# 3b. AUTO-SEED 5K DATASET ON FIRST BOOT (neu SEED_IF_EMPTY=true va DB rong)
-# =============================================================================
-if [ "${SEED_IF_EMPTY:-false}" = "true" ] && [ -f "/app/packages/database/dist/seed-scale-5k.js" ]; then
-  _user_count=$(node -e "
+if [ "$_need_seed" = "true" ] && [ -f "/app/packages/database/dist/seed-scale-5k.js" ]; then
+  _recheck_users=$(node -e "
     const { PrismaClient } = require('@prisma/client');
     const p = new PrismaClient();
     p.user.count()
@@ -122,17 +145,12 @@ if [ "${SEED_IF_EMPTY:-false}" = "true" ] && [ -f "/app/packages/database/dist/s
       .catch(() => { console.log(-1); process.exit(0); });
   " 2>/dev/null | tail -n 1)
 
-  if [ "${_user_count:-0}" -ge 0 ] && [ "${_user_count:-0}" -lt 10 ]; then
-    log "Database dang trong (users=${_user_count}). Bat dau nap bo du lieu 5.000 users..."
+  if [ "${_recheck_users:-0}" -ge 0 ] && [ "${_recheck_users:-0}" -lt 10 ]; then
+    log "Database dang trong (users=${_recheck_users}). Bat dau nap bo du lieu 5.000 users..."
     node /app/packages/database/dist/seed-scale-5k.js
     log "Nap du lieu 5.000 users hoan tat."
-  else
-    log "Bo qua auto-seed (users=${_user_count})."
   fi
 fi
 
-# =============================================================================
-# 4. EXEC - chuyen quyen PID 1 sang loi chinh (CMD hoac lenh custom)
-# =============================================================================
 log "Chay lenh: $*"
 exec "$@"

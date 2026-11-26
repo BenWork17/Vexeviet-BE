@@ -179,7 +179,7 @@ export class SearchService {
 
     const routeData = routes.map((r, index) => ({
       routeId: r.id,
-      departureDate: targetDates[index]!,
+      departureDate: targetDates[index],
       totalSeats: totalSeatsFromTemplate.get(r.id) || 0,
     }));
 
